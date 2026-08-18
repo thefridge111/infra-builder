@@ -1,2 +1,70 @@
-<app-nx-welcome></app-nx-welcome>
-<router-outlet></router-outlet>
+<div class="app-layout">
+  <header class="app-header">
+    <div class="header-left">
+      <h1 class="app-title">{{ title }}</h1>
+    </div>
+    <div class="header-actions">
+      <div class="btn-group">
+        <button class="btn" (click)="exportPng()">PNG</button>
+        <button class="btn" (click)="exportPdf()">PDF</button>
+      </div>
+      <div class="btn-group">
+        <button class="btn" (click)="exportCloudFormationJson()">
+          CF JSON
+        </button>
+        <button class="btn" (click)="exportCloudFormationYaml()">
+          CF YAML
+        </button>
+        <button class="btn" (click)="previewCloudFormation()">Preview</button>
+      </div>
+      <div class="btn-group">
+        <button class="btn" (click)="exportProject()">Save</button>
+        <label class="btn file-label">
+          Load
+          <input
+            type="file"
+            accept=".json"
+            (change)="importProject($event)"
+            hidden
+          />
+        </label>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <lib-sidebar
+      (deleteRequested)="canvasComponent?.deleteSelection()"
+    ></lib-sidebar>
+    <lib-canvas></lib-canvas>
+  </main>
+</div>
+
+@if (showCfPreview) {
+<!-- eslint-disable @angular-eslint/template/click-events-have-key-events, @angular-eslint/template/interactive-supports-focus -->
+<div
+  class="modal-overlay"
+  (click)="closeCfPreview()"
+  (keydown.escape)="closeCfPreview()"
+  role="dialog"
+  aria-modal="true"
+  tabindex="0"
+>
+  <div class="modal-content" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h2>CloudFormation Template</h2>
+      <button class="modal-close" (click)="closeCfPreview()">&times;</button>
+    </div>
+    <pre class="modal-body">{{ cfPreviewContent }}</pre>
+    <div class="modal-footer">
+      <button class="btn" (click)="exportCloudFormationJson()">
+        Download JSON
+      </button>
+      <button class="btn" (click)="exportCloudFormationYaml()">
+        Download YAML
+      </button>
+    </div>
+  </div>
+</div>
+<!-- eslint-enable @angular-eslint/template/click-events-have-key-events, @angular-eslint/template/interactive-supports-focus -->
+}

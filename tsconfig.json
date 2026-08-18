@@ -1,22 +1,5 @@
 {
   "compilerOptions": {
-    "rootDir": ".",
-    "sourceMap": true,
-    "declaration": false,
-    "moduleResolution": "bundler",
-    "emitDecoratorMetadata": false,
-    "experimentalDecorators": true,
-    "importHelpers": true,
-    "target": "es2022",
-    "module": "preserve",
-    "lib": [
-      "es2020",
-      "dom"
-    ],
-    "skipLibCheck": true,
-    "skipDefaultLibCheck": true,
-    "strict": true,
-    "paths": {},
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
     "noImplicitReturns": true,
@@ -39,9 +22,5 @@
       "path": "./tsconfig.spec.json"
     }
   ],
-  "compileOnSave": false,
-  "exclude": [
-    "node_modules",
-    "tmp"
-  ]
+  "extends": "./tsconfig.base.json"
 }

@@ -1,0 +1,25 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "bundler",
+    "emitDecoratorMetadata": false,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "es2022",
+    "module": "preserve",
+    "lib": ["es2020", "dom"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "strict": true,
+    "paths": {
+      "@aws-infra-builder/canvas": ["./libs/canvas/src/index.ts"],
+      "@aws-infra-builder/exports": ["./libs/exports/src/index.ts"],
+      "@aws-infra-builder/aws-icons": ["./libs/aws-icons/src/index.ts"],
+      "@aws-infra-builder/state": ["./libs/state/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "tmp"]
+}
