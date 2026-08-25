@@ -15,10 +15,10 @@
     "skipDefaultLibCheck": true,
     "strict": true,
     "paths": {
-      "@aws-infra-builder/canvas": ["./libs/canvas/src/index.ts"],
-      "@aws-infra-builder/exports": ["./libs/exports/src/index.ts"],
-      "@aws-infra-builder/aws-icons": ["./libs/aws-icons/src/index.ts"],
-      "@aws-infra-builder/state": ["./libs/state/src/index.ts"]
+      "@infra-builder/canvas": ["./libs/canvas/src/index.ts"],
+      "@infra-builder/exports": ["./libs/exports/src/index.ts"],
+      "@infra-builder/aws-icons": ["./libs/aws-icons/src/index.ts"],
+      "@infra-builder/state": ["./libs/state/src/index.ts"]
     }
   },
   "exclude": ["node_modules", "tmp"]

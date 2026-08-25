@@ -1,12 +1,12 @@
 import { Component, ViewChild, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Canvas, Sidebar } from '@aws-infra-builder/canvas';
-import { CanvasStateService } from '@aws-infra-builder/state';
+import { Canvas, Sidebar } from '@infra-builder/canvas';
+import { CanvasStateService } from '@infra-builder/state';
 import {
   PngExportService,
   PdfExportService,
   CloudformationExportService,
-} from '@aws-infra-builder/exports';
+} from '@infra-builder/exports';
 
 @Component({
   selector: 'app-root',

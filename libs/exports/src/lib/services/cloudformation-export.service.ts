@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { CanvasNode, CanvasEdge } from '@aws-infra-builder/state';
+import { CanvasNode, CanvasEdge } from '@infra-builder/state';
 
 interface CloudFormationResource {
   Type: string;

@@ -1,5 +1,5 @@
 {
-  "name": "aws-infra-builder",
+  "name": "infra-builder",
   "$schema": "node_modules/nx/schemas/project-schema.json",
   "includedScripts": [],
   "projectType": "application",
@@ -12,7 +12,7 @@
       "outputs": ["{options.outputPath}"],
       "defaultConfiguration": "production",
       "options": {
-        "outputPath": "dist/aws-infra-builder",
+        "outputPath": "dist/infra-builder",
         "browser": "./src/main.ts",
         "tsConfig": "tsconfig.app.json",
         "assets": [
@@ -53,10 +53,10 @@
       "defaultConfiguration": "development",
       "configurations": {
         "production": {
-          "buildTarget": "aws-infra-builder:build:production"
+          "buildTarget": "infra-builder:build:production"
         },
         "development": {
-          "buildTarget": "aws-infra-builder:build:development"
+          "buildTarget": "infra-builder:build:development"
         }
       }
     },
@@ -76,8 +76,8 @@
       "continuous": true,
       "executor": "@nx/web:file-server",
       "options": {
-        "buildTarget": "aws-infra-builder:build",
-        "staticFilePath": "dist/aws-infra-builder/browser",
+        "buildTarget": "infra-builder:build",
+        "staticFilePath": "dist/infra-builder/browser",
         "spa": true
       }
     }

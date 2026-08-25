@@ -9,13 +9,9 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import Konva from 'konva';
-import { CanvasStateService } from '@aws-infra-builder/state';
-import {
-  AwsServiceDefinition,
-  CanvasNode,
-  Port,
-} from '@aws-infra-builder/state';
-import { AWS_SERVICES } from '@aws-infra-builder/aws-icons';
+import { CanvasStateService } from '@infra-builder/state';
+import { AwsServiceDefinition, CanvasNode, Port } from '@infra-builder/state';
+import { AWS_SERVICES } from '@infra-builder/aws-icons';
 
 @Component({
   selector: 'lib-canvas',

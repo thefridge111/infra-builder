@@ -1,4 +1,4 @@
-import { AwsServiceDefinition } from '@aws-infra-builder/state';
+import { AwsServiceDefinition } from '@infra-builder/state';
 
 export const AWS_SERVICES: AwsServiceDefinition[] = [
   {

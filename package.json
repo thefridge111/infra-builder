@@ -1,5 +1,5 @@
 {
-  "name": "@aws-infra-builder/source",
+  "name": "@infra-builder/source",
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {

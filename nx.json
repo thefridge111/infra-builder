@@ -53,5 +53,5 @@
       "style": "scss"
     }
   },
-  "defaultProject": "aws-infra-builder"
+  "defaultProject": "infra-builder"
 }
