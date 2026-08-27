@@ -23,7 +23,9 @@ import {
   cloneSubgraph,
 } from '@infra-builder/state';
 import {
+  ACCESS_TARGETS,
   AWS_SERVICE_MAP,
+  DEFAULT_ACCESS,
   EDGE_KIND_LABELS,
   resolveEdge,
   validateDiagram,
@@ -615,9 +617,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
     });
     this.edgesLayer.add(arrow);
 
-    const text =
-      edge.label ??
-      (edge.kind === 'depends-on' ? '' : EDGE_KIND_LABELS[edge.kind]);
+    const text = edge.label ?? this.defaultEdgeLabel(edge);
     const anchor = labelAnchor(points);
     if (text && anchor) {
       const label = new Konva.Label({
@@ -640,6 +640,14 @@ export class Canvas implements AfterViewInit, OnDestroy {
       label.offsetY(label.height() / 2);
       this.edgesLayer.add(label);
     }
+  }
+
+  /** Depends-on edges to data services read as their IAM access mode. */
+  private defaultEdgeLabel(edge: CanvasEdge): string {
+    if (edge.kind !== 'depends-on') return EDGE_KIND_LABELS[edge.kind];
+    const target = this.state.node(edge.targetNodeId);
+    if (!target || !ACCESS_TARGETS.has(target.type)) return '';
+    return (edge.properties?.['Access'] ?? DEFAULT_ACCESS).replace('-', '/');
   }
 
   private drawGrid(): void {

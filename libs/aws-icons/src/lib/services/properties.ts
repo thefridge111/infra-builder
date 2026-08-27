@@ -114,3 +114,25 @@ export const TRIGGER_PROPERTY_FIELDS: Partial<
     { key: 'RouteKey', label: 'Route', placeholder: 'GET /items' },
   ],
 };
+
+/** Data services a compute node can be granted IAM access to via a depends-on edge. */
+export const ACCESS_TARGETS: ReadonlySet<AwsServiceType> =
+  new Set<AwsServiceType>([
+    's3',
+    'dynamodb',
+    'sqs',
+    'sns',
+    'kinesis',
+    'eventbridge',
+  ]);
+
+export type AccessMode = 'read' | 'write' | 'read-write';
+export const DEFAULT_ACCESS: AccessMode = 'read-write';
+
+export const ACCESS_PROPERTY_FIELDS: PropertyField[] = [
+  {
+    key: 'Access',
+    label: 'IAM access',
+    options: ['read', 'write', 'read-write'],
+  },
+];

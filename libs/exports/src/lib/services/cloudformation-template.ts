@@ -105,6 +105,66 @@ const INVOKE_PRINCIPALS: Partial<Record<AwsServiceType, string>> = {
   alb: 'elasticloadbalancing.amazonaws.com',
 };
 
+type AccessMode = 'read' | 'write' | 'read-write';
+
+/** IAM actions granted per data service; resources may also cover sub-paths. */
+const ACCESS_ACTIONS: Partial<
+  Record<
+    AwsServiceType,
+    { read: string[]; write: string[]; arn: 'Arn' | 'Ref'; subpath?: boolean }
+  >
+> = {
+  s3: {
+    read: ['s3:GetObject', 's3:ListBucket'],
+    write: ['s3:PutObject', 's3:DeleteObject'],
+    arn: 'Arn',
+    subpath: true,
+  },
+  dynamodb: {
+    read: [
+      'dynamodb:GetItem',
+      'dynamodb:BatchGetItem',
+      'dynamodb:Query',
+      'dynamodb:Scan',
+      'dynamodb:DescribeTable',
+    ],
+    write: [
+      'dynamodb:PutItem',
+      'dynamodb:UpdateItem',
+      'dynamodb:DeleteItem',
+      'dynamodb:BatchWriteItem',
+    ],
+    arn: 'Arn',
+    subpath: true,
+  },
+  sqs: {
+    read: [
+      'sqs:ReceiveMessage',
+      'sqs:DeleteMessage',
+      'sqs:GetQueueAttributes',
+      'sqs:GetQueueUrl',
+    ],
+    write: ['sqs:SendMessage', 'sqs:GetQueueUrl'],
+    arn: 'Arn',
+  },
+  sns: { read: ['sns:GetTopicAttributes'], write: ['sns:Publish'], arn: 'Ref' },
+  kinesis: {
+    read: [
+      'kinesis:GetRecords',
+      'kinesis:GetShardIterator',
+      'kinesis:DescribeStream',
+      'kinesis:ListShards',
+    ],
+    write: ['kinesis:PutRecord', 'kinesis:PutRecords'],
+    arn: 'Arn',
+  },
+  eventbridge: {
+    read: ['events:DescribeEventBus'],
+    write: ['events:PutEvents'],
+    arn: 'Arn',
+  },
+};
+
 const STREAM_SOURCES: Partial<
   Record<AwsServiceType, { props: Props; policy: string }>
 > = {
@@ -149,6 +209,10 @@ class Builder {
   private readonly lambdaRoles = new Map<string, string>();
   private readonly gatewayAttachments = new Map<string, string>();
   private readonly volumeCount = new Map<string, number>();
+  /** Inline policy statements per compute node id, from depends-on edges. */
+  private readonly accessStatements = new Map<string, Props[]>();
+  /** Logical id of the user-drawn role attached to an EC2 instance, if any. */
+  private readonly instanceRoles = new Map<string, string>();
 
   constructor(private nodes: CanvasNode[]) {
     this.byId = new Map(nodes.map((n) => [n.id, n]));
@@ -288,7 +352,38 @@ class Builder {
         break;
       default:
         this.dependsOn(target.id, this.id(source.id));
+        this.grantAccess(source, target, edgeProps);
     }
+  }
+
+  /** Records the IAM statement a compute node needs for a data service. */
+  private grantAccess(source: CanvasNode, target: CanvasNode, p: Props): void {
+    const access = ACCESS_ACTIONS[target.type];
+    if (!access || (source.type !== 'lambda' && source.type !== 'ec2')) return;
+    const mode = (p['Access'] as AccessMode | undefined) ?? 'read-write';
+    const actions = [
+      ...(mode !== 'write' ? access.read : []),
+      ...(mode !== 'read' ? access.write : []),
+    ];
+    const targetId = this.id(target.id);
+    const arn = access.arn === 'Ref' ? ref(targetId) : getAtt(targetId, 'Arn');
+    const resources = access.subpath
+      ? [arn, { 'Fn::Sub': ['${Arn}/*', { Arn: arn }] }]
+      : [arn];
+    const list = this.accessStatements.get(source.id) ?? [];
+    list.push({ Effect: 'Allow', Action: actions, Resource: resources });
+    this.accessStatements.set(source.id, list);
+  }
+
+  /** Adds an inline policy with the recorded statements to a role. */
+  private attachAccessPolicy(nodeId: string, roleId: string): void {
+    const statements = this.accessStatements.get(nodeId);
+    if (!statements?.length) return;
+    const role = this.resources[roleId].Properties as Props;
+    push(role, 'Policies', {
+      PolicyName: `${this.id(nodeId)}Access`,
+      PolicyDocument: { Version: '2012-10-17', Statement: statements },
+    });
   }
 
   private applyTrigger(source: CanvasNode, target: CanvasNode, p: Props): void {
@@ -513,6 +608,7 @@ class Builder {
           Properties: { Roles: [ref(sourceId)] },
         };
         targetProps['IamInstanceProfile'] = ref(profile);
+        this.instanceRoles.set(target.id, sourceId);
       }
     } else if (source.type === 'security-group') {
       const key: Partial<Record<AwsServiceType, string>> = {
@@ -613,6 +709,7 @@ class Builder {
   finish(): void {
     this.nodes.forEach((node) => {
       if (node.type === 'lambda') this.finishLambda(node);
+      if (node.type === 'ec2') this.finishInstance(node);
       if (node.type === 'nat-gateway') {
         const vpc = this.ancestor(node, 'vpc');
         const attachment = vpc && this.gatewayAttachments.get(vpc.id);
@@ -642,32 +739,60 @@ class Builder {
     }
 
     const policies = this.lambdaPolicies.get(node.id) ?? new Set<string>();
-    const roleId = this.lambdaRoles.get(node.id);
-    if (roleId) {
-      const role = this.resources[roleId].Properties as Props;
+    const userRole = this.lambdaRoles.get(node.id);
+    if (userRole) {
+      const role = this.resources[userRole].Properties as Props;
       const arns = new Set([
         ...((role['ManagedPolicyArns'] as string[] | undefined) ?? []),
         ...policies,
       ]);
       role['ManagedPolicyArns'] = [...arns];
+      this.attachAccessPolicy(node.id, userRole);
       return;
     }
 
-    const shared = 'LambdaExecutionRole';
-    this.resources[shared] ??= {
+    // Functions with their own data access get a dedicated role; the rest
+    // share one basic execution role.
+    const dedicated = this.accessStatements.has(node.id);
+    const roleId = dedicated
+      ? `${this.id(node.id)}Role`
+      : 'LambdaExecutionRole';
+    this.resources[roleId] ??= {
       Type: 'AWS::IAM::Role',
       Properties: {
         AssumeRolePolicyDocument: assumeRole('lambda.amazonaws.com'),
         ManagedPolicyArns: [POLICY.basic],
       },
     };
-    const arns = (this.resources[shared].Properties as Props)[
+    const arns = (this.resources[roleId].Properties as Props)[
       'ManagedPolicyArns'
     ] as string[];
     policies.forEach((p) => {
       if (!arns.includes(p)) arns.push(p);
     });
-    props['Role'] = getAtt(shared, 'Arn');
+    this.attachAccessPolicy(node.id, roleId);
+    props['Role'] = getAtt(roleId, 'Arn');
+  }
+
+  private finishInstance(node: CanvasNode): void {
+    if (!this.accessStatements.has(node.id)) return;
+    let roleId = this.instanceRoles.get(node.id);
+    if (!roleId) {
+      roleId = `${this.id(node.id)}Role`;
+      const profile = `${roleId}InstanceProfile`;
+      this.resources[roleId] = {
+        Type: 'AWS::IAM::Role',
+        Properties: {
+          AssumeRolePolicyDocument: assumeRole('ec2.amazonaws.com'),
+        },
+      };
+      this.resources[profile] = {
+        Type: 'AWS::IAM::InstanceProfile',
+        Properties: { Roles: [ref(roleId)] },
+      };
+      this.props(node.id)['IamInstanceProfile'] = ref(profile);
+    }
+    this.attachAccessPolicy(node.id, roleId);
   }
 
   private policy(lambdaId: string, arn: string): void {

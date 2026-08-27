@@ -303,3 +303,66 @@ describe('buildTemplate security groups', () => {
     ).toEqual({ Ref: 'A' });
   });
 });
+
+describe('buildTemplate data access', () => {
+  it('grants a lambda read access on a queue through a dedicated role', () => {
+    const t = buildTemplate(
+      [node('fn', 'lambda'), node('q', 'sqs'), node('other', 'lambda')],
+      [edge('fn', 'q', 'depends-on', { Access: 'read' })],
+    );
+    expect(t.Resources['Fn'].Properties?.['Role']).toEqual({
+      'Fn::GetAtt': ['FnRole', 'Arn'],
+    });
+    expect(t.Resources['Other'].Properties?.['Role']).toEqual({
+      'Fn::GetAtt': ['LambdaExecutionRole', 'Arn'],
+    });
+    const policies = t.Resources['FnRole'].Properties?.['Policies'] as Record<
+      string,
+      unknown
+    >[];
+    const statement = (
+      policies[0]['PolicyDocument'] as { Statement: Record<string, unknown>[] }
+    ).Statement[0];
+    expect(statement['Action']).toContain('sqs:ReceiveMessage');
+    expect(statement['Action']).not.toContain('sqs:SendMessage');
+    expect(statement['Resource']).toEqual([{ 'Fn::GetAtt': ['Q', 'Arn'] }]);
+  });
+
+  it('grants read-write by default, covering bucket objects, and reuses an attached role', () => {
+    const t = buildTemplate(
+      [node('role', 'iam-role'), node('fn', 'lambda'), node('bucket', 's3')],
+      [edge('role', 'fn', 'attaches'), edge('fn', 'bucket', 'depends-on')],
+    );
+    const policies = t.Resources['Role'].Properties?.['Policies'] as Record<
+      string,
+      unknown
+    >[];
+    const statement = (
+      policies[0]['PolicyDocument'] as { Statement: Record<string, unknown>[] }
+    ).Statement[0];
+    expect(statement['Action']).toEqual(
+      expect.arrayContaining(['s3:GetObject', 's3:PutObject']),
+    );
+    expect((statement['Resource'] as unknown[]).length).toBe(2);
+    expect(t.Resources['FnRole']).toBeUndefined();
+  });
+
+  it('gives an instance a generated role and profile for table writes', () => {
+    const t = buildTemplate(
+      [node('ec2', 'ec2'), node('table', 'dynamodb')],
+      [edge('ec2', 'table', 'depends-on', { Access: 'write' })],
+    );
+    expect(t.Resources['Ec2'].Properties?.['IamInstanceProfile']).toEqual({
+      Ref: 'Ec2RoleInstanceProfile',
+    });
+    const policies = t.Resources['Ec2Role'].Properties?.['Policies'] as Record<
+      string,
+      unknown
+    >[];
+    const statement = (
+      policies[0]['PolicyDocument'] as { Statement: Record<string, unknown>[] }
+    ).Statement[0];
+    expect(statement['Action']).toContain('dynamodb:PutItem');
+    expect(statement['Action']).not.toContain('dynamodb:GetItem');
+  });
+});

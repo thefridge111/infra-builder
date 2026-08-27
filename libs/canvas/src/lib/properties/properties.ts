@@ -13,6 +13,8 @@ import {
   EDGE_KIND_LABELS,
   NODE_PROPERTY_FIELDS,
   TRIGGER_PROPERTY_FIELDS,
+  ACCESS_PROPERTY_FIELDS,
+  ACCESS_TARGETS,
   matchRule,
   validateDiagram,
 } from '@infra-builder/aws-icons';
@@ -56,9 +58,20 @@ export class Properties {
 
   readonly edgeFields = computed<PropertyField[]>(() => {
     const edge = this.edge();
-    if (edge?.kind !== 'trigger') return [];
+    if (!edge) return [];
     const source = this.state.node(edge.sourceNodeId);
-    return (source && TRIGGER_PROPERTY_FIELDS[source.type]) ?? [];
+    const target = this.state.node(edge.targetNodeId);
+    if (edge.kind === 'trigger') {
+      return (source && TRIGGER_PROPERTY_FIELDS[source.type]) ?? [];
+    }
+    if (
+      edge.kind === 'depends-on' &&
+      target &&
+      ACCESS_TARGETS.has(target.type)
+    ) {
+      return ACCESS_PROPERTY_FIELDS;
+    }
+    return [];
   });
 
   readonly edgeSummary = computed(() => {

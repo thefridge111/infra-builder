@@ -14,6 +14,9 @@ or a CloudFormation template (JSON/YAML).
   settings (S3 event/prefix, batch size, schedule…)
 - Undo/redo, multi-select (⇧ drag), copy/paste/duplicate, keyboard nudging,
   zoom to fit, example projects to start from
+- IAM from the diagram: a Lambda or EC2 that depends on S3, DynamoDB, SQS,
+  SNS, Kinesis or EventBridge gets least-privilege policy statements for the
+  chosen access mode (read / write / read-write) on its role
 - Live validation: misplaced or unconnected resources are marked on the
   canvas and listed in the side panel; the exporter fills in what AWS needs
   (subnet AZs and CIDRs, execution-role policies, security groups, API stages)
