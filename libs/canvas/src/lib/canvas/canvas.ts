@@ -122,7 +122,10 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
     nodeIds.forEach((id) => {
       const group = this.nodesLayer.findOne<Konva.Group>(`#${id}`);
-      group?.destroy();
+      if (group) {
+        this.deletePortsForNode(id);
+        group.destroy();
+      }
       this.state.removeNode(id);
     });
 
@@ -134,6 +137,23 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
     this.nodesLayer.batchDraw();
     this.edgesLayer.batchDraw();
+  }
+
+  private deletePortsForNode(nodeId: string): void {
+    const node = this.findNodeForId(nodeId);
+    if (!node) return;
+
+    node?.ports.forEach((port) => {
+      const canvasPort = this.portsLayer.findOne<Konva.Group>(
+        this.buildPortId(nodeId, port.id),
+      );
+      const canvasLabel = this.portsLayer.findOne<Konva.Group>(
+        this.buildPortLabelId(nodeId, port.id),
+      );
+
+      canvasPort?.destroy();
+      canvasLabel?.destroy();
+    });
   }
 
   @HostListener('window:resize')
@@ -450,26 +470,69 @@ export class Canvas implements AfterViewInit, OnDestroy {
     });
   }
 
-  private updatePortPositions(nodeId: string, x: number, y: number): void {
-    const node = this.state.nodes().find((n) => n.id === nodeId);
-    if (!node) return;
+  private buildPortId(nodeId: string, portId: string): string {
+    return `#${nodeId}-port-${portId}`;
+  }
+
+  private buildPortLabelId(nodeId: string, portId: string): string {
+    return `#${nodeId}-port-${portId}-label`;
+  }
+
+  private findNodeForId(nodeId: string): CanvasNode | undefined {
+    return this.state.nodes().find((n) => n.id === nodeId);
+  }
+
+  /**
+   * Builds a list of ports associated with a node. Each entry is an object containing the circle and associated label.
+   * @param node The node to find ports for
+   * @returns List of ports on the canvas
+   */
+  private findCanvasPortsAndLabelsForNode(node: CanvasNode): {
+    port: Konva.Circle;
+    label: Konva.Text | undefined;
+    position: { x: number; y: number };
+  }[] {
+    const nodePorts: {
+      port: Konva.Circle;
+      label: Konva.Text | undefined;
+      position: { x: number; y: number };
+    }[] = [];
 
     node.ports.forEach((port) => {
-      const pos = this.getPortPosition(port, node);
       const circle = this.portsLayer.findOne<Konva.Circle>(
-        `#${nodeId}-port-${port.id}`,
+        this.buildPortId(node.id, port.id),
       );
+
       const label = this.portsLayer.findOne<Konva.Text>(
-        `#${nodeId}-port-${port.id}-label`,
+        this.buildPortLabelId(node.id, port.id),
       );
 
       if (circle) {
-        circle.x(x + pos.x);
-        circle.y(y + pos.y);
+        const pos = this.getPortPosition(port, node);
+        nodePorts.push({
+          port: circle,
+          label,
+          position: pos,
+        });
       }
-      if (label) {
-        label.x(x + pos.x);
-        label.y(y + pos.y);
+    });
+
+    return nodePorts;
+  }
+
+  private updatePortPositions(nodeId: string, x: number, y: number): void {
+    const node = this.findNodeForId(nodeId);
+    if (!node) return;
+
+    const ports = this.findCanvasPortsAndLabelsForNode(node);
+
+    ports.forEach((port) => {
+      port.port.x(x + port.position.x);
+      port.port.y(y + port.position.y);
+
+      if (port.label) {
+        port.label.x(x + port.position.x);
+        port.label.y(y + port.position.y);
       }
     });
     this.portsLayer.batchDraw();
