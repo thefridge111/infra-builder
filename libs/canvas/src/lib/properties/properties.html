@@ -1,0 +1,136 @@
+<aside class="properties">
+  @if (node(); as node) {
+  <div class="panel-header">
+    <span class="eyebrow">{{ typeLabel() }}</span>
+  </div>
+  <div class="field">
+    <label for="node-label">Name</label>
+    <input
+      #labelInput
+      id="node-label"
+      type="text"
+      [value]="node.label"
+      (change)="setLabel(node.id, labelInput.value)"
+      (keydown.enter)="labelInput.blur()"
+    />
+  </div>
+  @for (field of nodeFields(); track field.key) {
+  <div class="field">
+    <label [for]="'node-' + field.key">{{ field.label }}</label>
+    @if (field.options) {
+    <select
+      [id]="'node-' + field.key"
+      (change)="
+              setNodeProperty(node.id, field.key, $any($event.target).value)
+            "
+    >
+      <option value="" [selected]="!node.properties[field.key]">Default</option>
+      @for (option of field.options; track option) {
+      <option
+        [value]="option"
+        [selected]="node.properties[field.key] === option"
+      >
+        {{ option }}
+      </option>
+      }
+    </select>
+    } @else {
+    <input
+      [id]="'node-' + field.key"
+      type="text"
+      [value]="node.properties[field.key] || ''"
+      [placeholder]="field.placeholder || ''"
+      (change)="
+              setNodeProperty(node.id, field.key, $any($event.target).value)
+            "
+    />
+    }
+  </div>
+  } } @else if (edge(); as edge) {
+  <div class="panel-header">
+    <span class="eyebrow">{{ kindLabel() }}</span>
+    <p class="summary">{{ edgeSummary() }}</p>
+    @if (reversedKind(); as reversed) {
+    <button type="button" class="link" (click)="reverseEdge(edge.id)">
+      Reverse → {{ reversed }}
+    </button>
+    }
+  </div>
+  <div class="field">
+    <label for="edge-label">Label</label>
+    <input
+      #edgeLabel
+      id="edge-label"
+      type="text"
+      [value]="edge.label || ''"
+      [placeholder]="kindLabel()"
+      (change)="setEdgeLabel(edge.id, edgeLabel.value)"
+      (keydown.enter)="edgeLabel.blur()"
+    />
+  </div>
+  @for (field of edgeFields(); track field.key) {
+  <div class="field">
+    <label [for]="'edge-' + field.key">{{ field.label }}</label>
+    @if (field.options) {
+    <select
+      [id]="'edge-' + field.key"
+      (change)="
+              setEdgeProperty(edge.id, field.key, $any($event.target).value)
+            "
+    >
+      <option value="" [selected]="!edge.properties?.[field.key]">
+        Default
+      </option>
+      @for (option of field.options; track option) {
+      <option
+        [value]="option"
+        [selected]="edge.properties?.[field.key] === option"
+      >
+        {{ option }}
+      </option>
+      }
+    </select>
+    } @else {
+    <input
+      [id]="'edge-' + field.key"
+      type="text"
+      [value]="edge.properties?.[field.key] || ''"
+      [placeholder]="field.placeholder || ''"
+      (change)="
+              setEdgeProperty(edge.id, field.key, $any($event.target).value)
+            "
+    />
+    }
+  </div>
+  } } @else { @if (issues().length > 0) {
+  <div class="panel-header">
+    <span class="eyebrow">Issues ({{ issues().length }})</span>
+  </div>
+  <ul class="issues">
+    @for (issue of issues(); track $index) {
+    <li>
+      <button
+        type="button"
+        class="issue"
+        [class.error]="issue.level === 'error'"
+        [disabled]="!issue.nodeId"
+        (click)="selectIssue(issue.nodeId)"
+      >
+        {{ issue.message }}
+      </button>
+    </li>
+    }
+  </ul>
+  } @else {
+  <p class="hint">Select a node or connection to edit it.</p>
+  }
+  <ul class="shortcuts">
+    <li><kbd>Drag</kbd> pan · <kbd>⇧ Drag</kbd> select area</li>
+    <li><kbd>Scroll</kbd> zoom</li>
+    <li><kbd>⌘Z</kbd> undo · <kbd>⇧⌘Z</kbd> redo</li>
+    <li><kbd>←↑→↓</kbd> nudge · <kbd>⌫</kbd> delete</li>
+    <li><kbd>⌘A</kbd> select all · <kbd>⌘D</kbd> duplicate</li>
+    <li><kbd>⌘C</kbd> / <kbd>⌘V</kbd> copy &amp; paste</li>
+  </ul>
+  }
+</aside>

@@ -61,13 +61,22 @@
   cursor: pointer;
   white-space: nowrap;
 
-  &:hover {
+  &:hover:not(:disabled) {
     background-color: #475569;
+  }
+
+  &:disabled {
+    color: #64748b;
+    cursor: default;
   }
 }
 
 .file-label {
   cursor: pointer;
+}
+
+.examples {
+  border-radius: 6px;
 }
 
 .app-main {
@@ -77,6 +86,7 @@
 }
 
 .modal-overlay {
+  font-family: Inter, system-ui, sans-serif;
   position: fixed;
   inset: 0;
   background-color: rgba(0, 0, 0, 0.5);
