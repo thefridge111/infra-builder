@@ -152,3 +152,29 @@ describe('CanvasStateService history hygiene', () => {
     ]);
   });
 });
+
+describe('CanvasStateService gestures', () => {
+  let state: CanvasStateService;
+  beforeEach(() => {
+    localStorage.clear();
+    TestBed.resetTestingModule();
+    state = TestBed.inject(CanvasStateService);
+  });
+
+  it('keeps the redo stack when a gesture changes nothing', () => {
+    state.addNode(node('a'));
+    state.addNode(node('b'));
+    state.undo();
+    expect(state.canRedo()).toBe(true);
+    state.beginGesture();
+    state.moveNodes([{ id: 'a', x: 0, y: 0 }]);
+    state.endGesture();
+    expect(state.canRedo()).toBe(true);
+    state.beginGesture();
+    state.moveNodes([{ id: 'a', x: 40, y: 0 }]);
+    state.endGesture();
+    expect(state.canRedo()).toBe(false);
+    state.undo();
+    expect(state.node('a')?.x).toBe(0);
+  });
+});

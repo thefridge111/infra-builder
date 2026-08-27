@@ -27,6 +27,7 @@ export class CanvasStateService {
 
   private past: Snapshot[] = [];
   private future: Snapshot[] = [];
+  private gesture: { snapshot: Snapshot; future: Snapshot[] } | null = null;
   private saveTimer?: ReturnType<typeof setTimeout>;
   readonly canUndo = signal(false);
   readonly canRedo = signal(false);
@@ -113,6 +114,35 @@ export class CanvasStateService {
     if (this.past.length > HISTORY_LIMIT) this.past.shift();
     this.future = [];
     this.updateHistoryFlags();
+  }
+
+  /**
+   * Starts a drag/resize: records a snapshot but keeps the redo stack until
+   * endGesture() knows whether anything actually changed.
+   */
+  beginGesture(): void {
+    this.gesture = {
+      snapshot: { nodes: this.nodes(), edges: this.edges() },
+      future: this.future,
+    };
+    this.past.push(this.gesture.snapshot);
+    if (this.past.length > HISTORY_LIMIT) this.past.shift();
+    this.future = [];
+    this.updateHistoryFlags();
+  }
+
+  endGesture(): void {
+    const gesture = this.gesture;
+    this.gesture = null;
+    if (!gesture) return;
+    const unchanged =
+      JSON.stringify(gesture.snapshot.nodes) === JSON.stringify(this.nodes()) &&
+      gesture.snapshot.edges === this.edges();
+    if (unchanged && this.past[this.past.length - 1] === gesture.snapshot) {
+      this.past.pop();
+      this.future = gesture.future;
+      this.updateHistoryFlags();
+    }
   }
 
   undo(): void {

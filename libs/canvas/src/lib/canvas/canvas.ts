@@ -523,7 +523,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
     group.on('dblclick dbltap', () => this.nodeActivated.emit(node.id));
 
     group.on('dragstart', () => {
-      this.state.commit();
+      this.state.beginGesture();
       this.dragOrigin.clear();
       const moving = this.state.selectedNodeIds().has(node.id)
         ? this.selectionWithDescendants()
@@ -553,7 +553,10 @@ export class Canvas implements AfterViewInit, OnDestroy {
       moves.forEach((m) => this.syncNodeVisuals(m.id));
     });
 
-    group.on('dragend', () => this.reparent([...this.dragOrigin.keys()]));
+    group.on('dragend', () => {
+      this.reparent([...this.dragOrigin.keys()]);
+      this.state.endGesture();
+    });
 
     (def.container ? this.containersLayer : this.nodesLayer).add(group);
   }
@@ -816,7 +819,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
   }
 
   private setupTransformer(): void {
-    this.transformer.on('transformstart', () => this.state.commit());
+    this.transformer.on('transformstart', () => this.state.beginGesture());
     this.transformer.on('transform', () => {
       const body = this.transformer.nodes()[0] as Konva.Rect | undefined;
       if (body) this.applyBodyScale(body);
@@ -832,6 +835,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
       // transformstart already committed; this is the same undo step.
       this.state.updateNode(group.id(), { x, y, width, height }, false);
       this.adoptNodesInside(group.id());
+      this.state.endGesture();
     });
   }
 

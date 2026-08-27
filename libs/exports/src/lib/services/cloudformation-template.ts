@@ -547,7 +547,16 @@ class Builder {
     const sourceId = this.id(source.id);
     const targetId = this.id(target.id);
 
-    if (source.type === 'internet-gateway' && target.type === 'vpc') {
+    if (source.type === 'security-group' && target.type === 'security-group') {
+      this.resources[`${targetId}From${sourceId}Ingress`] = {
+        Type: 'AWS::EC2::SecurityGroupIngress',
+        Properties: {
+          GroupId: ref(targetId),
+          SourceSecurityGroupId: ref(sourceId),
+          IpProtocol: '-1',
+        },
+      };
+    } else if (source.type === 'internet-gateway' && target.type === 'vpc') {
       const attachment = `${targetId}${sourceId}Attachment`;
       this.resources[attachment] = {
         Type: 'AWS::EC2::VPCGatewayAttachment',
@@ -615,7 +624,10 @@ class Builder {
   private finishLambda(node: CanvasNode): void {
     const props = this.props(node.id);
     const config = props['VpcConfig'] as Props | undefined;
-    if (config && !config['SecurityGroupIds']) {
+    if (config && !config['SubnetIds']) {
+      // A security group alone is not a VPC config; keep the function public.
+      delete props['VpcConfig'];
+    } else if (config && !config['SecurityGroupIds']) {
       // Lambda requires SubnetIds and SecurityGroupIds together.
       const vpc = this.ancestor(node, 'vpc');
       const sg = `${this.id(node.id)}SecurityGroup`;

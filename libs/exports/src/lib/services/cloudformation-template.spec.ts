@@ -286,3 +286,20 @@ describe('buildTemplate deployability rules', () => {
     expect(code['ZipFile']).toContain('def handler');
   });
 });
+
+describe('buildTemplate security groups', () => {
+  it('drops a half VpcConfig and emits ingress between groups', () => {
+    const t = buildTemplate(
+      [
+        node('fn', 'lambda'),
+        node('a', 'security-group'),
+        node('b', 'security-group'),
+      ],
+      [edge('a', 'fn', 'attaches'), edge('a', 'b', 'network')],
+    );
+    expect(t.Resources['Fn'].Properties?.['VpcConfig']).toBeUndefined();
+    expect(
+      t.Resources['BFromAIngress'].Properties?.['SourceSecurityGroupId'],
+    ).toEqual({ Ref: 'A' });
+  });
+});

@@ -26,6 +26,7 @@ export const EDGE_RULES: EdgeRule[] = [
     kind: 'attaches',
   },
   { source: ['ebs'], target: ['ec2'], kind: 'attaches' },
+  { source: ['security-group'], target: ['security-group'], kind: 'network' },
   { source: ['internet-gateway'], target: ['vpc'], kind: 'network' },
   { source: ['alb'], target: ['ec2', 'lambda'], kind: 'network' },
   {
