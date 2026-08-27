@@ -6,6 +6,7 @@ import {
   OnDestroy,
   inject,
   HostListener,
+  effect,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import Konva from 'konva';
@@ -40,6 +41,29 @@ export class Canvas implements AfterViewInit, OnDestroy {
     this.initKonva();
     this.setupEventListeners();
     this.setupKeyboardHandlers();
+    this.renderExistingState();
+    this.watchStateChanges();
+  }
+
+  private renderExistingState(): void {
+    this.state.nodes().forEach((node) => {
+      const serviceDef = AWS_SERVICES.find((s) => s.type === node.type);
+      if (serviceDef) {
+        this.renderNode(node, serviceDef);
+      }
+    });
+    this.state.edges().forEach((edge) => {
+      this.renderEdge(edge);
+    });
+    this.updateTransform();
+  }
+
+  private watchStateChanges(): void {
+    effect(() => {
+      this.state.nodes();
+      this.state.edges();
+      this.updateTransform();
+    });
   }
 
   ngOnDestroy(): void {
