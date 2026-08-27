@@ -75,6 +75,10 @@
   cursor: pointer;
 }
 
+.examples {
+  border-radius: 6px;
+}
+
 .app-main {
   display: flex;
   flex: 1;

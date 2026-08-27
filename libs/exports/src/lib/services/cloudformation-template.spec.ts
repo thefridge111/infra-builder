@@ -164,3 +164,125 @@ describe('buildTemplate', () => {
     expect(t.Resources['Fn'].Properties?.['Runtime']).toBe('python3.12');
   });
 });
+
+describe('buildTemplate deployability rules', () => {
+  it('spreads ALB and RDS over every subnet in the VPC with distinct AZs', () => {
+    const t = buildTemplate(
+      [
+        node('vpc', 'vpc'),
+        node('a', 'subnet', { parentId: 'vpc' }),
+        node('b', 'subnet', { parentId: 'vpc' }),
+        node('alb', 'alb', { parentId: 'a' }),
+        node('db', 'rds', { parentId: 'b' }),
+      ],
+      [],
+    );
+    expect(t.Resources['Alb'].Properties?.['Subnets']).toEqual([
+      { Ref: 'A' },
+      { Ref: 'B' },
+    ]);
+    expect(t.Resources['DbSubnetGroup'].Properties?.['SubnetIds']).toEqual([
+      { Ref: 'A' },
+      { Ref: 'B' },
+    ]);
+    expect(t.Resources['A'].Properties?.['CidrBlock']).toBe('10.0.1.0/24');
+    expect(t.Resources['B'].Properties?.['CidrBlock']).toBe('10.0.2.0/24');
+    expect(t.Resources['B'].Properties?.['AvailabilityZone']).toEqual({
+      'Fn::Select': [1, { 'Fn::GetAZs': '' }],
+    });
+  });
+
+  it('names an HTTP API and gives routed APIs a stage', () => {
+    const t = buildTemplate(
+      [
+        node('api', 'api-gateway', { label: 'Upload API' }),
+        node('fn', 'lambda'),
+      ],
+      [edge('api', 'fn', 'trigger', { RouteKey: 'POST /images' })],
+    );
+    expect(t.Resources['UploadAPI'].Properties?.['Name']).toBe('Upload API');
+    expect(t.Resources['UploadAPIStage'].Properties?.['StageName']).toBe(
+      '$default',
+    );
+    expect(t.Resources['UploadAPIFnRoute'].Properties?.['RouteKey']).toBe(
+      'POST /images',
+    );
+  });
+
+  it('gives event-source and VPC lambdas the managed policies they need', () => {
+    const t = buildTemplate(
+      [
+        node('vpc', 'vpc'),
+        node('subnet', 'subnet', { parentId: 'vpc' }),
+        node('q', 'sqs'),
+        node('fn', 'lambda', { parentId: 'subnet' }),
+      ],
+      [edge('q', 'fn', 'trigger')],
+    );
+    const arns = t.Resources['LambdaExecutionRole'].Properties?.[
+      'ManagedPolicyArns'
+    ] as string[];
+    expect(arns.some((a) => a.endsWith('AWSLambdaSQSQueueExecutionRole'))).toBe(
+      true,
+    );
+    expect(
+      arns.some((a) => a.endsWith('AWSLambdaVPCAccessExecutionRole')),
+    ).toBe(true);
+    const config = t.Resources['Fn'].Properties?.['VpcConfig'] as Record<
+      string,
+      unknown
+    >;
+    expect(config['SecurityGroupIds']).toEqual([{ Ref: 'FnSecurityGroup' }]);
+    expect(t.Resources['FnSecurityGroup'].Properties?.['VpcId']).toEqual({
+      Ref: 'Vpc',
+    });
+  });
+
+  it('orders NAT gateways after the internet gateway attachment', () => {
+    const t = buildTemplate(
+      [
+        node('vpc', 'vpc'),
+        node('subnet', 'subnet', { parentId: 'vpc' }),
+        node('nat', 'nat-gateway', { parentId: 'subnet' }),
+        node('igw', 'internet-gateway'),
+      ],
+      [edge('igw', 'vpc', 'network')],
+    );
+    expect(t.Resources['Nat'].DependsOn).toEqual(['VpcIgwAttachment']);
+    expect(t.Resources['NatEip'].Type).toBe('AWS::EC2::EIP');
+  });
+
+  it('attaches multiple volumes on distinct devices in the instance AZ', () => {
+    const t = buildTemplate(
+      [node('ec2', 'ec2'), node('v1', 'ebs'), node('v2', 'ebs')],
+      [edge('v1', 'ec2', 'attaches'), edge('v2', 'ec2', 'attaches')],
+    );
+    expect(t.Resources['Ec2V1Attachment'].Properties?.['Device']).toBe(
+      '/dev/sdf',
+    );
+    expect(t.Resources['Ec2V2Attachment'].Properties?.['Device']).toBe(
+      '/dev/sdg',
+    );
+    expect(t.Resources['V1'].Properties?.['AvailabilityZone']).toEqual({
+      'Fn::GetAtt': ['Ec2', 'AvailabilityZone'],
+    });
+  });
+
+  it('adds provisioned throughput and python stubs when selected', () => {
+    const t = buildTemplate(
+      [
+        node('t', 'dynamodb', { properties: { BillingMode: 'PROVISIONED' } }),
+        node('fn', 'lambda', { properties: { Runtime: 'python3.12' } }),
+      ],
+      [],
+    );
+    expect(
+      t.Resources['T'].Properties?.['ProvisionedThroughput'],
+    ).toBeDefined();
+    const code = t.Resources['Fn'].Properties?.['Code'] as Record<
+      string,
+      string
+    >;
+    expect(code['ZipFile']).toContain('def handler');
+  });
+});

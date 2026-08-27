@@ -37,12 +37,10 @@ export class Sidebar {
 
   zoomIn(): void {
     this.state.setZoom(this.state.zoom() * 1.2);
-    this.state.version.update((v) => v + 1);
   }
 
   zoomOut(): void {
     this.state.setZoom(this.state.zoom() / 1.2);
-    this.state.version.update((v) => v + 1);
   }
 
   get zoomPercent(): number {

@@ -3,11 +3,14 @@ import { CanvasNode, CanvasEdge, CanvasState } from './models';
 
 const STORAGE_KEY = 'infra-builder-canvas-state';
 const HISTORY_LIMIT = 100;
+const SAVE_DELAY_MS = 300;
 
 interface Snapshot {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
 }
+
+export type NodePatch = Partial<CanvasNode> & { id: string };
 
 @Injectable({ providedIn: 'root' })
 export class CanvasStateService {
@@ -24,16 +27,29 @@ export class CanvasStateService {
 
   private past: Snapshot[] = [];
   private future: Snapshot[] = [];
+  private saveTimer?: ReturnType<typeof setTimeout>;
   readonly canUndo = signal(false);
   readonly canRedo = signal(false);
 
   constructor() {
     this.loadFromStorage();
-    effect(() => this.saveToStorage());
+    effect(() => {
+      const state = this.state();
+      clearTimeout(this.saveTimer);
+      this.saveTimer = setTimeout(
+        () => this.saveToStorage(state),
+        SAVE_DELAY_MS,
+      );
+    });
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', () => {
+        clearTimeout(this.saveTimer);
+        this.saveToStorage(this.state());
+      });
+    }
   }
 
-  private saveToStorage(): void {
-    const state = this.state();
+  private saveToStorage(state: CanvasState): void {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (e) {
@@ -89,6 +105,10 @@ export class CanvasStateService {
 
   /** Records the current nodes/edges so the next change can be undone. */
   commit(): void {
+    const last = this.past[this.past.length - 1];
+    if (last && last.nodes === this.nodes() && last.edges === this.edges()) {
+      return;
+    }
     this.past.push({ nodes: this.nodes(), edges: this.edges() });
     if (this.past.length > HISTORY_LIMIT) this.past.shift();
     this.future = [];
@@ -130,26 +150,63 @@ export class CanvasStateService {
     this.version.update((v) => v + 1);
   }
 
-  removeNodes(ids: string[]): void {
-    if (ids.length === 0) return;
-    const doomed = new Set<string>();
-    ids.forEach((id) => this.descendantIds(id).forEach((d) => doomed.add(d)));
+  /** Inserts copies of a subgraph (see cloneSubgraph) and selects them. */
+  paste(nodes: CanvasNode[], edges: CanvasEdge[]): void {
+    if (nodes.length === 0) return;
     this.commit();
-    this.nodes.update((nodes) => nodes.filter((n) => !doomed.has(n.id)));
+    this.nodes.update((all) => [...all, ...nodes]);
+    this.edges.update((all) => [...all, ...edges]);
+    this.selectNodes(nodes.map((n) => n.id));
+    this.version.update((v) => v + 1);
+  }
+
+  /** Removes nodes (with their descendants and edges) and edges in one undo step. */
+  remove(nodeIds: string[], edgeIds: string[] = []): void {
+    if (nodeIds.length === 0 && edgeIds.length === 0) return;
+    const doomedNodes = new Set<string>();
+    nodeIds.forEach((id) =>
+      this.descendantIds(id).forEach((d) => doomedNodes.add(d)),
+    );
+    const doomedEdges = new Set(edgeIds);
+    this.commit();
+    this.nodes.update((nodes) => nodes.filter((n) => !doomedNodes.has(n.id)));
     this.edges.update((edges) =>
       edges.filter(
-        (e) => !doomed.has(e.sourceNodeId) && !doomed.has(e.targetNodeId),
+        (e) =>
+          !doomedEdges.has(e.id) &&
+          !doomedNodes.has(e.sourceNodeId) &&
+          !doomedNodes.has(e.targetNodeId),
       ),
     );
     this.clearSelection();
     this.version.update((v) => v + 1);
   }
 
-  /** Persistent node change (label, size, parent, properties). Undoable. */
-  updateNode(id: string, patch: Partial<CanvasNode>): void {
-    this.commit();
+  removeNodes(ids: string[]): void {
+    this.remove(ids, []);
+  }
+
+  removeEdges(ids: string[]): void {
+    this.remove([], ids);
+  }
+
+  /**
+   * Persistent node change (label, size, parent, properties). Undoable unless
+   * `record` is false, for gestures that already committed at their start.
+   */
+  updateNode(id: string, patch: Partial<CanvasNode>, record = true): void {
+    this.updateNodes([{ ...patch, id }], record);
+  }
+
+  updateNodes(patches: NodePatch[], record = true): void {
+    if (patches.length === 0) return;
+    if (record) this.commit();
+    const byId = new Map(patches.map((p) => [p.id, p]));
     this.nodes.update((nodes) =>
-      nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
+      nodes.map((n) => {
+        const patch = byId.get(n.id);
+        return patch ? { ...n, ...patch } : n;
+      }),
     );
     this.version.update((v) => v + 1);
   }
@@ -172,10 +229,14 @@ export class CanvasStateService {
   /** The node itself plus all nested children. */
   descendantIds(id: string): string[] {
     const result = [id];
+    const seen = new Set(result);
     for (let i = 0; i < result.length; i++) {
       this.nodes()
-        .filter((n) => n.parentId === result[i])
-        .forEach((n) => result.push(n.id));
+        .filter((n) => n.parentId === result[i] && !seen.has(n.id))
+        .forEach((n) => {
+          seen.add(n.id);
+          result.push(n.id);
+        });
     }
     return result;
   }
@@ -185,15 +246,6 @@ export class CanvasStateService {
   addEdge(edge: CanvasEdge): void {
     this.commit();
     this.edges.update((edges) => [...edges, edge]);
-    this.version.update((v) => v + 1);
-  }
-
-  removeEdges(ids: string[]): void {
-    if (ids.length === 0) return;
-    const doomed = new Set(ids);
-    this.commit();
-    this.edges.update((edges) => edges.filter((e) => !doomed.has(e.id)));
-    this.clearSelection();
     this.version.update((v) => v + 1);
   }
 
@@ -248,16 +300,15 @@ export class CanvasStateService {
 
   // --- Load ----------------------------------------------------------------
 
+  /** Replaces the whole diagram. Undoable. */
   loadState(state: CanvasState): void {
+    this.commit();
     this.applyState(state);
-    this.past = [];
-    this.future = [];
-    this.updateHistoryFlags();
     this.version.update((v) => v + 1);
   }
 
   private applyState(state: CanvasState): void {
-    this.nodes.set(state.nodes ?? []);
+    this.nodes.set(sanitizeParents(state.nodes ?? []));
     this.edges.set(
       (state.edges ?? []).map((e) => ({ ...e, kind: e.kind ?? 'depends-on' })),
     );
@@ -289,4 +340,20 @@ function toggle(ids: Set<string>, id: string): Set<string> {
     next.add(id);
   }
   return next;
+}
+
+/** Drops parent links that point nowhere or would form a cycle. */
+function sanitizeParents(nodes: CanvasNode[]): CanvasNode[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  return nodes.map((node) => {
+    if (!node.parentId) return node;
+    const seen = new Set([node.id]);
+    let current = byId.get(node.parentId);
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+    const valid = byId.has(node.parentId) && !current;
+    return valid ? node : { ...node, parentId: undefined };
+  });
 }

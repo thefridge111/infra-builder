@@ -96,6 +96,59 @@ describe('CanvasStateService', () => {
       panY: 0,
     });
     expect(state.edges()[0].kind).toBe('depends-on');
+    expect(state.canUndo()).toBe(true);
+  });
+});
+
+describe('CanvasStateService history hygiene', () => {
+  let state: CanvasStateService;
+  beforeEach(() => {
+    localStorage.clear();
+    TestBed.resetTestingModule();
+    state = TestBed.inject(CanvasStateService);
+  });
+
+  it('removes a node and an edge in a single undo step', () => {
+    state.addNode(node('a'));
+    state.addNode(node('b'));
+    state.addEdge({
+      id: 'e',
+      kind: 'depends-on',
+      sourceNodeId: 'a',
+      sourcePortId: 'r',
+      targetNodeId: 'b',
+      targetPortId: 'l',
+    });
+    state.remove(['a'], ['e']);
+    expect(state.nodes().map((n) => n.id)).toEqual(['b']);
+    state.undo();
+    expect(state.nodes().length).toBe(2);
+    expect(state.edges().length).toBe(1);
+  });
+
+  it('skips no-op commits and drops dangling or cyclic parents on load', () => {
+    state.addNode(node('a'));
+    state.commit();
+    state.commit();
+    state.undo();
+    expect(state.nodes().length).toBe(1);
+    state.undo();
+    expect(state.nodes()).toEqual([]);
     expect(state.canUndo()).toBe(false);
+
+    state.loadState({
+      nodes: [node('x', 'missing'), node('y', 'z'), node('z', 'y')],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+    });
+    expect(state.nodes().map((n) => n.parentId)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
   });
 });

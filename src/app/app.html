@@ -4,6 +4,14 @@
       <h1 class="app-title">{{ title }}</h1>
     </div>
     <div class="header-actions">
+      <select class="btn examples" (change)="loadExample($event)">
+        <option value="">Examples…</option>
+        @for (example of examples; track example.name) {
+        <option [value]="$index" [title]="example.description">
+          {{ example.name }}
+        </option>
+        }
+      </select>
       <div class="btn-group">
         <button
           class="btn"
@@ -56,7 +64,10 @@
       (fitRequested)="canvas.fitToContent()"
       (addRequested)="canvas.addNode($event)"
     ></lib-sidebar>
-    <lib-canvas (nodeActivated)="focusLabel()"></lib-canvas>
+    <lib-canvas
+      [shortcutsEnabled]="!showCfPreview"
+      (nodeActivated)="focusLabel()"
+    ></lib-canvas>
     <lib-properties></lib-properties>
   </main>
 </div>

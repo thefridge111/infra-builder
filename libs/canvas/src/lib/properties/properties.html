@@ -10,7 +10,7 @@
       id="node-label"
       type="text"
       [value]="node.label"
-      (change)="setLabel(labelInput.value)"
+      (change)="setLabel(node.id, labelInput.value)"
       (keydown.enter)="labelInput.blur()"
     />
   </div>
@@ -20,12 +20,18 @@
     @if (field.options) {
     <select
       [id]="'node-' + field.key"
-      [value]="node.properties[field.key] || ''"
-      (change)="setNodeProperty(field.key, $any($event.target).value)"
+      (change)="
+              setNodeProperty(node.id, field.key, $any($event.target).value)
+            "
     >
-      <option value="">Default</option>
+      <option value="" [selected]="!node.properties[field.key]">Default</option>
       @for (option of field.options; track option) {
-      <option [value]="option">{{ option }}</option>
+      <option
+        [value]="option"
+        [selected]="node.properties[field.key] === option"
+      >
+        {{ option }}
+      </option>
       }
     </select>
     } @else {
@@ -34,7 +40,9 @@
       type="text"
       [value]="node.properties[field.key] || ''"
       [placeholder]="field.placeholder || ''"
-      (change)="setNodeProperty(field.key, $any($event.target).value)"
+      (change)="
+              setNodeProperty(node.id, field.key, $any($event.target).value)
+            "
     />
     }
   </div>
@@ -42,6 +50,23 @@
   <div class="panel-header">
     <span class="eyebrow">{{ kindLabel() }}</span>
     <p class="summary">{{ edgeSummary() }}</p>
+    @if (reversedKind(); as reversed) {
+    <button type="button" class="link" (click)="reverseEdge(edge.id)">
+      Reverse → {{ reversed }}
+    </button>
+    }
+  </div>
+  <div class="field">
+    <label for="edge-label">Label</label>
+    <input
+      #edgeLabel
+      id="edge-label"
+      type="text"
+      [value]="edge.label || ''"
+      [placeholder]="kindLabel()"
+      (change)="setEdgeLabel(edge.id, edgeLabel.value)"
+      (keydown.enter)="edgeLabel.blur()"
+    />
   </div>
   @for (field of edgeFields(); track field.key) {
   <div class="field">
@@ -49,12 +74,20 @@
     @if (field.options) {
     <select
       [id]="'edge-' + field.key"
-      [value]="edge.properties?.[field.key] || ''"
-      (change)="setEdgeProperty(field.key, $any($event.target).value)"
+      (change)="
+              setEdgeProperty(edge.id, field.key, $any($event.target).value)
+            "
     >
-      <option value="">Default</option>
+      <option value="" [selected]="!edge.properties?.[field.key]">
+        Default
+      </option>
       @for (option of field.options; track option) {
-      <option [value]="option">{{ option }}</option>
+      <option
+        [value]="option"
+        [selected]="edge.properties?.[field.key] === option"
+      >
+        {{ option }}
+      </option>
       }
     </select>
     } @else {
@@ -63,20 +96,41 @@
       type="text"
       [value]="edge.properties?.[field.key] || ''"
       [placeholder]="field.placeholder || ''"
-      (change)="setEdgeProperty(field.key, $any($event.target).value)"
+      (change)="
+              setEdgeProperty(edge.id, field.key, $any($event.target).value)
+            "
     />
     }
   </div>
-  } @empty {
-  <p class="hint">No options for this connection.</p>
-  } } @else {
+  } } @else { @if (issues().length > 0) {
+  <div class="panel-header">
+    <span class="eyebrow">Issues ({{ issues().length }})</span>
+  </div>
+  <ul class="issues">
+    @for (issue of issues(); track $index) {
+    <li>
+      <button
+        type="button"
+        class="issue"
+        [class.error]="issue.level === 'error'"
+        [disabled]="!issue.nodeId"
+        (click)="selectIssue(issue.nodeId)"
+      >
+        {{ issue.message }}
+      </button>
+    </li>
+    }
+  </ul>
+  } @else {
   <p class="hint">Select a node or connection to edit it.</p>
+  }
   <ul class="shortcuts">
-    <li><kbd>Drag</kbd> pan</li>
-    <li><kbd>⇧ Drag</kbd> select area</li>
+    <li><kbd>Drag</kbd> pan · <kbd>⇧ Drag</kbd> select area</li>
     <li><kbd>Scroll</kbd> zoom</li>
     <li><kbd>⌘Z</kbd> undo · <kbd>⇧⌘Z</kbd> redo</li>
     <li><kbd>←↑→↓</kbd> nudge · <kbd>⌫</kbd> delete</li>
+    <li><kbd>⌘A</kbd> select all · <kbd>⌘D</kbd> duplicate</li>
+    <li><kbd>⌘C</kbd> / <kbd>⌘V</kbd> copy &amp; paste</li>
   </ul>
   }
 </aside>

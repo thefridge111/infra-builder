@@ -58,8 +58,9 @@ export class CloudformationExportService {
   }
 }
 
+// Leading indicators, ": "/" #" sequences, trailing ":", or scalars YAML would type.
 const NEEDS_QUOTES =
-  /^[\s\-?:,[\]{}#&*!|>'"%@`]|[:#]\s|\s$|^(true|false|null|~|[\d.+-]+)$/i;
+  /^[\s\-?:,[\]{}#&*!|>'"%@`]|[:#]\s|\s#|:$|\s$|^(true|false|null|~|[\d.+-]+)$/i;
 
 function yamlString(value: string, spaces: string): string {
   if (value.includes('\n')) {

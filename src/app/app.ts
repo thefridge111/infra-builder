@@ -1,6 +1,7 @@
 import { Component, HostListener, ViewChild, inject } from '@angular/core';
 import { Canvas, Properties, Sidebar } from '@infra-builder/canvas';
 import { CanvasStateService } from '@infra-builder/state';
+import { EXAMPLE_PROJECTS } from '@infra-builder/aws-icons';
 import {
   PngExportService,
   PdfExportService,
@@ -23,12 +24,22 @@ export class App {
   private cfExport = inject(CloudformationExportService);
 
   protected title = 'AWS Infrastructure Builder';
+  protected examples = EXAMPLE_PROJECTS;
   showCfPreview = false;
   cfPreviewContent = '';
 
   @HostListener('document:keydown.escape')
   closeCfPreview(): void {
     this.showCfPreview = false;
+  }
+
+  loadExample(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    const example = this.examples[Number(select.value)];
+    select.value = '';
+    if (!example) return;
+    this.state.loadState(example.build());
+    setTimeout(() => this.canvas.fitToContent());
   }
 
   focusLabel(): void {

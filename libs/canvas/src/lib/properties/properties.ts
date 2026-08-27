@@ -13,6 +13,8 @@ import {
   EDGE_KIND_LABELS,
   NODE_PROPERTY_FIELDS,
   TRIGGER_PROPERTY_FIELDS,
+  matchRule,
+  validateDiagram,
 } from '@infra-builder/aws-icons';
 
 @Component({
@@ -31,9 +33,9 @@ export class Properties {
     afterRenderEffect(() => {
       const request = this.focusRequests();
       const input = this.labelInput();
-      if (input && request !== this.focusHandled) {
+      if (request !== this.focusHandled) {
         this.focusHandled = request;
-        input.nativeElement.select();
+        input?.nativeElement.select();
       }
     });
   }
@@ -67,6 +69,10 @@ export class Properties {
     return `${source} → ${target}`;
   });
 
+  readonly issues = computed(() =>
+    validateDiagram(this.state.nodes(), this.state.edges()),
+  );
+
   readonly typeLabel = computed(
     () => AWS_SERVICE_MAP.get(this.node()?.type ?? 'vpc')?.label ?? '',
   );
@@ -76,38 +82,78 @@ export class Properties {
     return edge ? EDGE_KIND_LABELS[edge.kind] : '';
   });
 
-  focusLabel(): void {
-    this.focusRequests.update((n) => n + 1);
+  /** The kind this edge would have if drawn the other way, when that's allowed. */
+  readonly reversedKind = computed(() => {
+    const edge = this.edge();
+    const source = edge && this.state.node(edge.sourceNodeId);
+    const target = edge && this.state.node(edge.targetNodeId);
+    if (!source || !target) return null;
+    const rule = matchRule(target.type, source.type);
+    return rule ? EDGE_KIND_LABELS[rule.kind] : null;
+  });
+
+  reverseEdge(id: string): void {
+    const edge = this.state.edges().find((e) => e.id === id);
+    const source = edge && this.state.node(edge.sourceNodeId);
+    const target = edge && this.state.node(edge.targetNodeId);
+    const rule = source && target && matchRule(target.type, source.type);
+    if (!edge || !rule) return;
+    this.state.updateEdge(id, {
+      kind: rule.kind,
+      sourceNodeId: edge.targetNodeId,
+      sourcePortId: edge.targetPortId,
+      targetNodeId: edge.sourceNodeId,
+      targetPortId: edge.sourcePortId,
+      properties: undefined,
+    });
   }
 
-  setLabel(label: string): void {
-    const node = this.node();
-    if (node && label.trim() && label !== node.label) {
-      this.state.updateNode(node.id, { label: label.trim() });
+  focusLabel(): void {
+    if (this.node()) this.focusRequests.update((n) => n + 1);
+  }
+
+  // Handlers take ids bound at render time: a blur-triggered change event can
+  // fire after the selection has already moved to another node.
+  setLabel(id: string, label: string): void {
+    const node = this.state.node(id);
+    const trimmed = label.trim();
+    if (node && trimmed && trimmed !== node.label) {
+      this.state.updateNode(id, { label: trimmed });
     }
   }
 
-  setNodeProperty(key: string, value: string): void {
-    const node = this.node();
-    if (!node) return;
+  setNodeProperty(id: string, key: string, value: string): void {
+    const node = this.state.node(id);
+    if (!node || (node.properties[key] ?? '') === value) return;
     const properties = { ...node.properties };
     if (value) {
       properties[key] = value;
     } else {
       delete properties[key];
     }
-    this.state.updateNode(node.id, { properties });
+    this.state.updateNode(id, { properties });
   }
 
-  setEdgeProperty(key: string, value: string): void {
-    const edge = this.edge();
-    if (!edge) return;
+  setEdgeLabel(id: string, label: string): void {
+    const edge = this.state.edges().find((e) => e.id === id);
+    if (edge && (label.trim() || undefined) !== edge.label) {
+      this.state.updateEdge(id, { label: label.trim() || undefined });
+    }
+  }
+
+  selectIssue(nodeId?: string): void {
+    if (nodeId) this.state.selectNode(nodeId);
+  }
+
+  setEdgeProperty(id: string, key: string, value: string): void {
+    const edge = this.state.edges().find((e) => e.id === id);
+    if (!edge || (edge.properties?.[key] ?? '') === value) return;
     const properties = { ...edge.properties };
     if (value) {
       properties[key] = value;
     } else {
       delete properties[key];
     }
-    this.state.updateEdge(edge.id, { properties });
+    this.state.updateEdge(id, { properties });
   }
 }

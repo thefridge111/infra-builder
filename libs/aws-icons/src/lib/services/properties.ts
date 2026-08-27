@@ -25,7 +25,7 @@ export const NODE_PROPERTY_FIELDS: Partial<
     {
       key: 'Runtime',
       label: 'Runtime',
-      options: ['nodejs22.x', 'nodejs20.x', 'python3.12', 'java21', 'go1.x'],
+      options: ['nodejs22.x', 'nodejs20.x', 'python3.13', 'python3.12'],
     },
     { key: 'Handler', label: 'Handler', placeholder: 'index.handler' },
     { key: 'MemorySize', label: 'Memory (MB)', placeholder: '128' },
@@ -36,7 +36,7 @@ export const NODE_PROPERTY_FIELDS: Partial<
     {
       key: 'Engine',
       label: 'Engine',
-      options: ['mysql', 'postgres', 'mariadb', 'aurora-mysql'],
+      options: ['mysql', 'postgres', 'mariadb'],
     },
     {
       key: 'DBInstanceClass',
@@ -72,7 +72,9 @@ export const NODE_PROPERTY_FIELDS: Partial<
     },
   ],
   ebs: [{ key: 'Size', label: 'Size (GB)', placeholder: '8' }],
-  'api-gateway': [{ key: 'Name', label: 'API name', placeholder: 'optional' }],
+  'api-gateway': [
+    { key: 'Name', label: 'API name', placeholder: 'defaults to node name' },
+  ],
 };
 
 /** Editable properties per trigger source type. */

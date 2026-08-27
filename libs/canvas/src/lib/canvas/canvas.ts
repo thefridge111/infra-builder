@@ -7,7 +7,9 @@ import {
   inject,
   HostListener,
   effect,
+  input,
   output,
+  untracked,
 } from '@angular/core';
 import Konva from 'konva';
 import {
@@ -18,12 +20,20 @@ import {
   CanvasEdge,
   EdgeKind,
   Port,
+  cloneSubgraph,
 } from '@infra-builder/state';
-import { AWS_SERVICE_MAP, resolveEdge } from '@infra-builder/aws-icons';
+import {
+  AWS_SERVICE_MAP,
+  EDGE_KIND_LABELS,
+  resolveEdge,
+  validateDiagram,
+} from '@infra-builder/aws-icons';
+import { routeEdge } from './routing';
 
 const GRID_SIZE = 20;
 const HEADER_HEIGHT = 28;
 const MIN_CONTAINER_SIZE = 120;
+const PASTE_OFFSET = 40;
 const FONT = 'Inter, system-ui, sans-serif';
 
 const EDGE_STYLE: Record<
@@ -46,10 +56,13 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
   /** Emitted on node double-click so the host can focus the label editor. */
   nodeActivated = output<string>();
+  /** Hosts turn this off while a modal owns the keyboard. */
+  shortcutsEnabled = input(true);
 
   private state = inject(CanvasStateService);
   private stage?: Konva.Stage;
   private gridLayer!: Konva.Layer;
+  private containersLayer!: Konva.Layer;
   private edgesLayer!: Konva.Layer;
   private nodesLayer!: Konva.Layer;
   private portsLayer!: Konva.Layer;
@@ -61,11 +74,36 @@ export class Canvas implements AfterViewInit, OnDestroy {
   private pointerMode: 'none' | 'pan' | 'select' = 'none';
   private pointerStart = { x: 0, y: 0 };
   private dragOrigin = new Map<string, { x: number; y: number }>();
+  private hoveredNodeId: string | null = null;
+  private drawingFrom: string | null = null;
+  private cancelEdgeDraw: (() => void) | null = null;
+  private clipboard: { nodes: CanvasNode[]; edges: CanvasEdge[] } | null = null;
 
   constructor() {
+    // Reads inside are untracked so drags and selection don't trigger re-renders.
     effect(() => {
       this.state.version();
-      if (this.stage) this.renderAll();
+      if (this.stage) untracked(() => this.renderAll());
+    });
+    effect(() => {
+      this.state.zoom();
+      this.state.panX();
+      this.state.panY();
+      if (this.stage) {
+        untracked(() => {
+          this.updateTransform();
+          this.drawGrid();
+          const zoom = this.state.zoom();
+          this.transformer.anchorSize(8 / zoom);
+          this.transformer.borderStrokeWidth(1 / zoom);
+          this.transformer.anchorStrokeWidth(1 / zoom);
+        });
+      }
+    });
+    effect(() => {
+      this.state.selectedNodeIds();
+      this.state.selectedEdgeIds();
+      if (this.stage) untracked(() => this.refreshSelection());
     });
   }
 
@@ -75,6 +113,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    window.removeEventListener('pointerup', this.onWindowPointerUp);
     this.stage?.destroy();
   }
 
@@ -93,30 +132,28 @@ export class Canvas implements AfterViewInit, OnDestroy {
     });
 
     this.gridLayer = new Konva.Layer({ listening: false });
+    this.containersLayer = new Konva.Layer();
     this.edgesLayer = new Konva.Layer();
     this.nodesLayer = new Konva.Layer();
     this.portsLayer = new Konva.Layer();
     this.overlayLayer = new Konva.Layer();
     this.transformer = new Konva.Transformer({
       rotateEnabled: false,
-      enabledAnchors: [
-        'top-left',
-        'top-right',
-        'bottom-left',
-        'bottom-right',
-        'middle-right',
-        'bottom-center',
-      ],
+      // Corners only: mid-side anchors would sit on the container's ports.
+      enabledAnchors: ['top-left', 'top-right', 'bottom-left', 'bottom-right'],
       anchorSize: 8,
       keepRatio: false,
+      flipEnabled: false,
       borderStroke: '#3b82f6',
       anchorStroke: '#3b82f6',
       ignoreStroke: true,
     });
     this.overlayLayer.add(this.transformer);
 
+    // Containers sit under edges so connections inside a VPC stay clickable.
     this.stage.add(
       this.gridLayer,
+      this.containersLayer,
       this.edgesLayer,
       this.nodesLayer,
       this.portsLayer,
@@ -125,7 +162,18 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
     this.setupStageEvents();
     this.setupTransformer();
+    window.addEventListener('pointerup', this.onWindowPointerUp);
   }
+
+  /** Ends any gesture whose pointer was released outside the stage. */
+  private onWindowPointerUp = (e: PointerEvent): void => {
+    if (this.stage?.container().contains(e.target as Node)) return;
+    this.pointerMode = 'none';
+    this.stage?.container().style.removeProperty('cursor');
+    this.selectionRect?.destroy();
+    this.selectionRect = null;
+    this.cancelEdgeDraw?.();
+  };
 
   @HostListener('window:resize')
   onResize(): void {
@@ -139,40 +187,87 @@ export class Canvas implements AfterViewInit, OnDestroy {
   @HostListener('window:keydown', ['$event'])
   onKeydown(e: KeyboardEvent): void {
     const target = e.target as HTMLElement;
+    if (!this.shortcutsEnabled()) return;
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
 
     const mod = e.metaKey || e.ctrlKey;
-    if (mod && e.key.toLowerCase() === 'z') {
+    const key = e.key.toLowerCase();
+    if (mod && key === 'z') {
       e.preventDefault();
       if (e.shiftKey) {
         this.state.redo();
       } else {
         this.state.undo();
       }
-    } else if (mod && e.key.toLowerCase() === 'y') {
+    } else if (mod && key === 'y') {
       e.preventDefault();
       this.state.redo();
+    } else if (mod && key === 'a') {
+      e.preventDefault();
+      this.state.selectNodes(this.state.nodes().map((n) => n.id));
+    } else if (mod && key === 'c') {
+      this.copySelection();
+    } else if (mod && key === 'v') {
+      e.preventDefault();
+      this.paste();
+    } else if (mod && key === 'd') {
+      e.preventDefault();
+      if (this.state.selectedNodeIds().size === 0) return;
+      this.copySelection();
+      this.paste();
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       this.deleteSelection();
     } else if (e.key === 'Escape') {
       this.state.clearSelection();
-      this.refreshSelection();
     } else if (e.key.startsWith('Arrow')) {
       e.preventDefault();
       const step = e.shiftKey ? GRID_SIZE * 5 : GRID_SIZE;
       const dx =
         e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
       const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-      this.nudgeSelection(dx, dy);
+      this.nudgeSelection(dx, dy, !e.repeat);
     }
   }
 
   // --- Public actions ------------------------------------------------------
 
   deleteSelection(): void {
-    this.state.removeEdges([...this.state.selectedEdgeIds()]);
-    this.state.removeNodes([...this.state.selectedNodeIds()]);
+    this.state.remove(
+      [...this.state.selectedNodeIds()],
+      [...this.state.selectedEdgeIds()],
+    );
+  }
+
+  copySelection(): void {
+    const ids = this.selectionWithDescendants();
+    if (ids.size === 0) return;
+    this.clipboard = cloneSubgraph(
+      this.state.nodes(),
+      this.state.edges(),
+      ids,
+      { x: 0, y: 0 },
+      () => this.state.createNodeId(),
+    );
+  }
+
+  paste(): void {
+    if (!this.clipboard) return;
+    const ids = new Set(this.clipboard.nodes.map((n) => n.id));
+    const copy = cloneSubgraph(
+      this.clipboard.nodes,
+      this.clipboard.edges,
+      ids,
+      { x: PASTE_OFFSET, y: PASTE_OFFSET },
+      () => this.state.createNodeId(),
+    );
+    // Keep the clipboard at the pasted position so repeated pastes cascade.
+    this.clipboard = copy;
+    // Copies that lost their parent adopt whichever container they land in.
+    copy.nodes
+      .filter((n) => !n.parentId)
+      .forEach((n) => (n.parentId = this.findContainerFor(n)));
+    this.state.paste(copy.nodes, copy.edges);
   }
 
   /** Adds a node at the centre of the current viewport. */
@@ -194,7 +289,6 @@ export class Canvas implements AfterViewInit, OnDestroy {
     if (!this.stage || nodes.length === 0) {
       this.state.setZoom(1);
       this.state.setPan(0, 0);
-      this.updateTransform();
       return;
     }
     const minX = Math.min(...nodes.map((n) => n.x));
@@ -213,7 +307,6 @@ export class Canvas implements AfterViewInit, OnDestroy {
       (this.stage.width() - (maxX - minX) * z) / 2 - minX * z,
       (this.stage.height() - (maxY - minY) * z) / 2 - minY * z,
     );
-    this.updateTransform();
   }
 
   onDragOver(event: DragEvent): void {
@@ -249,6 +342,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
     };
     node.parentId = this.findContainerFor(node);
     this.state.addNode(node);
+    if (def.container) this.adoptNodesInside(node.id);
     this.state.selectNode(node.id);
   }
 
@@ -256,27 +350,48 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
   private renderAll(): void {
     this.transformer.nodes([]);
+    this.containersLayer.destroyChildren();
     this.nodesLayer.destroyChildren();
     this.portsLayer.destroyChildren();
     this.edgesLayer.destroyChildren();
+    this.hoveredNodeId = null;
 
     const nodes = this.state.nodes();
-    const depth = (n: CanvasNode): number =>
-      n.parentId ? 1 + depth(this.state.node(n.parentId) ?? n) : 0;
+    const edges = this.state.edges();
+    const issues = new Map<string, 'error' | 'warning'>();
+    validateDiagram(nodes, edges).forEach((issue) => {
+      if (issue.nodeId && issues.get(issue.nodeId) !== 'error') {
+        issues.set(issue.nodeId, issue.level);
+      }
+    });
+
+    // Containers first (outermost to innermost), then leaf nodes on top.
+    const depth = (n: CanvasNode): number => {
+      const parent = n.parentId ? this.state.node(n.parentId) : undefined;
+      return parent ? 1 + depth(parent) : 0;
+    };
+    const order = (n: CanvasNode): number =>
+      (AWS_SERVICE_MAP.get(n.type)?.container ? 0 : 1000) + depth(n);
     [...nodes]
-      .sort((a, b) => depth(a) - depth(b))
+      .sort((a, b) => order(a) - order(b))
       .forEach((node) => {
         const def = AWS_SERVICE_MAP.get(node.type);
-        if (def) this.renderNode(node, def);
+        if (def) this.renderNode(node, def, issues.get(node.id));
       });
-    this.state.edges().forEach((edge) => this.renderEdge(edge));
+    edges.forEach((edge) => this.renderEdge(edge));
 
     this.updateTransform();
     this.drawGrid();
     this.refreshSelection();
+    // Draw synchronously so hit-testing is correct before the next frame.
+    this.stage?.draw();
   }
 
-  private renderNode(node: CanvasNode, def: AwsServiceDefinition): void {
+  private renderNode(
+    node: CanvasNode,
+    def: AwsServiceDefinition,
+    issue?: 'error' | 'warning',
+  ): void {
     const group = new Konva.Group({
       x: node.x,
       y: node.y,
@@ -322,27 +437,87 @@ export class Canvas implements AfterViewInit, OnDestroy {
         ellipsis: true,
         wrap: 'none',
       }),
-      new Konva.Text({
-        name: 'type',
-        text: def.label.toUpperCase(),
-        fontSize: 10,
-        fontFamily: FONT,
-        fill: '#6b7280',
-        y: HEADER_HEIGHT + 8,
-        width: node.width,
-        align: def.container ? 'right' : 'center',
-        padding: def.container ? 6 : 0,
-      }),
     );
 
+    if (def.container) {
+      group.add(
+        new Konva.Text({
+          name: 'type',
+          text: def.label.toUpperCase(),
+          fontSize: 10,
+          fontFamily: FONT,
+          fill: '#6b7280',
+          y: HEADER_HEIGHT + 8,
+          width: node.width,
+          align: 'right',
+          padding: 6,
+        }),
+      );
+    } else {
+      const iconSize = 28;
+      group.add(
+        new Konva.Path({
+          name: 'icon',
+          data: def.iconPath,
+          fill: def.color,
+          x: node.width / 2 - iconSize / 2,
+          y: HEADER_HEIGHT + 8,
+          scale: { x: iconSize / 24, y: iconSize / 24 },
+          listening: false,
+        }),
+        new Konva.Text({
+          name: 'type',
+          text: def.label.toUpperCase(),
+          fontSize: 9,
+          fontFamily: FONT,
+          fill: '#6b7280',
+          y: HEADER_HEIGHT + iconSize + 12,
+          width: node.width,
+          align: 'center',
+        }),
+      );
+    }
+
+    if (issue) {
+      group.add(
+        new Konva.Circle({
+          name: 'issue',
+          x: node.width,
+          y: 0,
+          radius: 7,
+          fill: issue === 'error' ? '#ef4444' : '#f59e0b',
+          stroke: 'white',
+          strokeWidth: 2,
+          listening: false,
+        }),
+        new Konva.Text({
+          name: 'issue-mark',
+          text: '!',
+          x: node.width - 7,
+          y: -7,
+          width: 14,
+          height: 14,
+          align: 'center',
+          verticalAlign: 'middle',
+          fontSize: 10,
+          fontStyle: 'bold',
+          fontFamily: FONT,
+          fill: 'white',
+          listening: false,
+        }),
+      );
+    }
+
     node.ports.forEach((port) => this.renderPort(node, port));
+
+    group.on('mouseenter', () => this.setHovered(node.id));
+    group.on('mouseleave', () => this.setHovered(null));
 
     group.on('pointerdown', (e) => {
       e.cancelBubble = true;
       if (!this.state.selectedNodeIds().has(node.id) || e.evt.shiftKey) {
         this.state.selectNode(node.id, e.evt.shiftKey);
       }
-      this.refreshSelection();
     });
 
     group.on('dblclick dbltap', () => this.nodeActivated.emit(node.id));
@@ -350,11 +525,14 @@ export class Canvas implements AfterViewInit, OnDestroy {
     group.on('dragstart', () => {
       this.state.commit();
       this.dragOrigin.clear();
-      this.dragOrigin.set(node.id, group.position());
-      this.state.descendantIds(node.id).forEach((id) => {
+      const moving = this.state.selectedNodeIds().has(node.id)
+        ? this.selectionWithDescendants()
+        : new Set(this.state.descendantIds(node.id));
+      moving.forEach((id) => {
         const g = this.nodeGroup(id);
         if (g) this.dragOrigin.set(id, g.position());
       });
+      this.dragOrigin.set(node.id, group.position());
     });
 
     group.on('dragmove', () => {
@@ -375,18 +553,9 @@ export class Canvas implements AfterViewInit, OnDestroy {
       moves.forEach((m) => this.syncNodeVisuals(m.id));
     });
 
-    group.on('dragend', () => {
-      const current = this.state.node(node.id);
-      if (!current) return;
-      const parentId = this.findContainerFor(current);
-      if (parentId !== current.parentId) {
-        this.state.updateNode(node.id, { parentId });
-      } else {
-        this.refreshSelection();
-      }
-    });
+    group.on('dragend', () => this.reparent([...this.dragOrigin.keys()]));
 
-    this.nodesLayer.add(group);
+    (def.container ? this.containersLayer : this.nodesLayer).add(group);
   }
 
   private renderPort(node: CanvasNode, port: Port): void {
@@ -400,15 +569,18 @@ export class Canvas implements AfterViewInit, OnDestroy {
       strokeWidth: 2,
       id: portId(node.id, port.id),
       name: 'port',
-      hitStrokeWidth: 10,
+      hitStrokeWidth: 8,
+      visible: false,
     });
     circle.on('mouseenter', () => {
+      this.setHovered(node.id);
       circle.radius(8);
       this.stage?.container().style.setProperty('cursor', 'crosshair');
     });
     circle.on('mouseleave', () => {
       circle.radius(5);
       this.stage?.container().style.removeProperty('cursor');
+      this.setHovered(null);
     });
     circle.on('pointerdown', (e) => {
       e.cancelBubble = true;
@@ -429,6 +601,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
       fill: style.stroke,
       strokeWidth: 2,
       dash: style.dash,
+      lineJoin: 'round',
       pointerLength: style.arrow ? 10 : 0,
       pointerWidth: style.arrow ? 8 : 0,
       hitStrokeWidth: 12,
@@ -436,9 +609,34 @@ export class Canvas implements AfterViewInit, OnDestroy {
     arrow.on('pointerdown', (e) => {
       e.cancelBubble = true;
       this.state.selectEdge(edge.id, e.evt.shiftKey);
-      this.refreshSelection();
     });
     this.edgesLayer.add(arrow);
+
+    const text =
+      edge.label ??
+      (edge.kind === 'depends-on' ? '' : EDGE_KIND_LABELS[edge.kind]);
+    const anchor = labelAnchor(points);
+    if (text && anchor) {
+      const label = new Konva.Label({
+        id: `${edge.id}-label`,
+        name: 'edge-label',
+        listening: false,
+        ...anchor,
+      });
+      label.add(
+        new Konva.Tag({ fill: 'white', cornerRadius: 3, opacity: 0.9 }),
+        new Konva.Text({
+          text,
+          fontSize: 9,
+          fontFamily: FONT,
+          fill: style.stroke,
+          padding: 3,
+        }),
+      );
+      label.offsetX(label.width() / 2);
+      label.offsetY(label.height() / 2);
+      this.edgesLayer.add(label);
+    }
   }
 
   private drawGrid(): void {
@@ -478,6 +676,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
     const scale = this.state.zoom();
     [
       this.gridLayer,
+      this.containersLayer,
       this.edgesLayer,
       this.nodesLayer,
       this.portsLayer,
@@ -487,12 +686,12 @@ export class Canvas implements AfterViewInit, OnDestroy {
     );
   }
 
-  /** Re-applies selection highlights and the resize transformer. */
+  /** Re-applies selection highlights, port visibility and the resize transformer. */
   private refreshSelection(): void {
     const nodeIds = this.state.selectedNodeIds();
     const edgeIds = this.state.selectedEdgeIds();
 
-    this.nodesLayer.find<Konva.Group>('.node').forEach((group) => {
+    this.allNodeGroups().forEach((group) => {
       const selected = nodeIds.has(group.id());
       group.findOne<Konva.Rect>('.body')?.setAttrs({
         stroke: selected ? '#3b82f6' : '#d1d5db',
@@ -513,7 +712,30 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
     const single = nodeIds.size === 1 ? [...nodeIds][0] : null;
     const group = single ? this.nodeGroup(single) : null;
-    this.transformer.nodes(group?.hasName('container') ? [group] : []);
+    const body = group?.hasName('container')
+      ? group.findOne<Konva.Rect>('.body')
+      : undefined;
+    this.transformer.nodes(body ? [body] : []);
+    this.updatePortVisibility();
+  }
+
+  private setHovered(nodeId: string | null): void {
+    if (this.hoveredNodeId === nodeId) return;
+    this.hoveredNodeId = nodeId;
+    this.updatePortVisibility();
+  }
+
+  /** Ports show for hovered/selected nodes, and everywhere while drawing an edge. */
+  private updatePortVisibility(): void {
+    const selected = this.state.selectedNodeIds();
+    this.portsLayer.find<Konva.Circle>('.port').forEach((circle) => {
+      const [nodeId] = parsePortId(circle.id());
+      circle.visible(
+        this.drawingFrom !== null ||
+          nodeId === this.hoveredNodeId ||
+          selected.has(nodeId),
+      );
+    });
   }
 
   // --- Interaction ---------------------------------------------------------
@@ -524,7 +746,6 @@ export class Canvas implements AfterViewInit, OnDestroy {
     stage.on('pointerdown', (e) => {
       if (e.target !== stage) return;
       this.state.clearSelection();
-      this.refreshSelection();
       this.pointerStart = stage.getPointerPosition() ?? { x: 0, y: 0 };
       this.pointerMode = e.evt.shiftKey ? 'select' : 'pan';
       if (this.pointerMode === 'select') {
@@ -550,7 +771,6 @@ export class Canvas implements AfterViewInit, OnDestroy {
           this.state.panY() + pos.y - this.pointerStart.y,
         );
         this.pointerStart = pos;
-        this.updateTransform();
       } else if (this.pointerMode === 'select' && this.selectionRect) {
         const a = this.toCanvasPoint(this.pointerStart);
         const b = this.toCanvasPoint(pos);
@@ -565,7 +785,6 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
     stage.on('pointerup', () => {
       if (this.pointerMode === 'pan') {
-        this.drawGrid();
         stage.container().style.removeProperty('cursor');
       } else if (this.pointerMode === 'select' && this.selectionRect) {
         const box = this.selectionRect.getSelfRect();
@@ -578,7 +797,6 @@ export class Canvas implements AfterViewInit, OnDestroy {
           .filter((n) => Konva.Util.haveIntersection(box, this.nodeRect(n)))
           .map((n) => n.id);
         this.state.selectNodes(hit);
-        this.refreshSelection();
       }
       this.pointerMode = 'none';
     });
@@ -594,52 +812,55 @@ export class Canvas implements AfterViewInit, OnDestroy {
         pointer.x - anchor.x * scale,
         pointer.y - anchor.y * scale,
       );
-      this.updateTransform();
-      this.drawGrid();
     });
   }
 
   private setupTransformer(): void {
     this.transformer.on('transformstart', () => this.state.commit());
     this.transformer.on('transform', () => {
-      const group = this.transformer.nodes()[0] as Konva.Group | undefined;
-      if (group) this.applyGroupScale(group);
+      const body = this.transformer.nodes()[0] as Konva.Rect | undefined;
+      if (body) this.applyBodyScale(body);
     });
     this.transformer.on('transformend', () => {
-      const group = this.transformer.nodes()[0] as Konva.Group | undefined;
-      if (!group) return;
-      const body = group.findOne<Konva.Rect>('.body') as Konva.Rect;
+      const body = this.transformer.nodes()[0] as Konva.Rect | undefined;
+      const group = body?.getParent() as Konva.Group | undefined;
+      if (!body || !group) return;
       const x = snap(group.x());
       const y = snap(group.y());
       const width = Math.max(MIN_CONTAINER_SIZE, snap(body.width()));
       const height = Math.max(MIN_CONTAINER_SIZE, snap(body.height()));
-      this.state.moveNodes([{ id: group.id(), x, y }]);
-      this.state.updateNode(group.id(), { width, height });
+      // transformstart already committed; this is the same undo step.
+      this.state.updateNode(group.id(), { x, y, width, height }, false);
+      this.adoptNodesInside(group.id());
     });
   }
 
-  /** Bakes transformer scale into the group's shapes so strokes stay crisp. */
-  private applyGroupScale(group: Konva.Group): void {
-    const body = group.findOne<Konva.Rect>('.body') as Konva.Rect;
-    const width = body.width() * group.scaleX();
-    const height = body.height() * group.scaleY();
-    group.scale({ x: 1, y: 1 });
+  /** Bakes transformer scale into the body and moves the group with it. */
+  private applyBodyScale(body: Konva.Rect): void {
+    const group = body.getParent() as Konva.Group;
+    const width = body.width() * body.scaleX();
+    const height = body.height() * body.scaleY();
+    body.scale({ x: 1, y: 1 });
+    group.move({ x: body.x(), y: body.y() });
+    body.position({ x: 0, y: 0 });
     body.size({ width, height });
     group.findOne<Konva.Rect>('.header')?.width(width);
     group.find<Konva.Text>('.label, .type').forEach((t) => t.width(width));
+    group.findOne<Konva.Circle>('.issue')?.x(width);
+    group.findOne<Konva.Text>('.issue-mark')?.x(width - 7);
     this.state.moveNodes([{ id: group.id(), x: group.x(), y: group.y() }]);
     const node = this.state.node(group.id());
     if (node) {
-      this.positionPorts({ ...node, width, height });
-      this.updateEdgesForNode(node.id);
+      const resized = { ...node, width, height };
+      this.positionPorts(resized);
+      this.updateEdgesForNode(node.id, resized);
     }
   }
 
-  private nudgeSelection(dx: number, dy: number): void {
-    const ids = [...this.state.selectedNodeIds()];
-    if (ids.length === 0) return;
-    this.state.commit();
-    const moved = new Set(ids.flatMap((id) => this.state.descendantIds(id)));
+  private nudgeSelection(dx: number, dy: number, record: boolean): void {
+    const moved = this.selectionWithDescendants();
+    if (moved.size === 0) return;
+    if (record) this.state.commit();
     this.state.moveNodes(
       [...moved].flatMap((id) => {
         const n = this.state.node(id);
@@ -653,6 +874,35 @@ export class Canvas implements AfterViewInit, OnDestroy {
         this.syncNodeVisuals(id);
       }
     });
+    this.reparent([...moved]);
+  }
+
+  /**
+   * Re-derives the container of every moved node whose parent didn't move
+   * with it. Doesn't record history: the gesture already committed.
+   */
+  private reparent(movedIds: string[]): void {
+    const moved = new Set(movedIds);
+    const patches = movedIds.flatMap((id) => {
+      const node = this.state.node(id);
+      if (!node || (node.parentId && moved.has(node.parentId))) return [];
+      const parentId = this.findContainerFor(node);
+      return parentId === node.parentId ? [] : [{ id, parentId }];
+    });
+    this.state.updateNodes(patches, false);
+  }
+
+  /** Makes a container own the nodes now drawn inside it (after drop/resize). */
+  private adoptNodesInside(containerId: string): void {
+    const excluded = new Set(this.state.descendantIds(containerId));
+    const patches = this.state
+      .nodes()
+      .filter((n) => !excluded.has(n.id))
+      .flatMap((n) => {
+        const parentId = this.findContainerFor(n);
+        return parentId === n.parentId ? [] : [{ id: n.id, parentId }];
+      });
+    this.state.updateNodes(patches, false);
   }
 
   private startEdgeDraw(
@@ -667,19 +917,30 @@ export class Canvas implements AfterViewInit, OnDestroy {
       stroke: '#3b82f6',
       strokeWidth: 2 / this.state.zoom(),
       dash: [6, 3],
+      listening: false,
     });
     this.overlayLayer.add(this.tempLine);
+    this.drawingFrom = sourceNodeId;
+    this.updatePortVisibility();
 
     const onMove = () => {
       const p = this.toCanvasPoint(stage.getPointerPosition() ?? from);
       this.tempLine?.points([from.x, from.y, p.x, p.y]);
     };
 
-    const onUp = (evt: Konva.KonvaEventObject<PointerEvent>) => {
+    const cleanup = () => {
       stage.off('pointermove', onMove);
       stage.off('pointerup', onUp);
       this.tempLine?.destroy();
       this.tempLine = null;
+      this.drawingFrom = null;
+      this.cancelEdgeDraw = null;
+      this.updatePortVisibility();
+    };
+    this.cancelEdgeDraw = cleanup;
+
+    const onUp = (evt: Konva.KonvaEventObject<PointerEvent>) => {
+      cleanup();
 
       const target = evt.target;
       if (!target.hasName('port')) return;
@@ -731,7 +992,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
     const node = this.state.node(nodeId);
     if (!node) return;
     this.positionPorts(node);
-    this.updateEdgesForNode(nodeId);
+    this.updateEdgesForNode(nodeId, node);
   }
 
   private positionPorts(node: CanvasNode): void {
@@ -743,26 +1004,34 @@ export class Canvas implements AfterViewInit, OnDestroy {
     });
   }
 
-  private updateEdgesForNode(nodeId: string): void {
+  /** `override` supplies in-progress geometry (e.g. mid-resize) for one node. */
+  private updateEdgesForNode(nodeId: string, override?: CanvasNode): void {
     this.state
       .edges()
       .filter((e) => e.sourceNodeId === nodeId || e.targetNodeId === nodeId)
       .forEach((edge) => {
-        const points = this.edgePoints(edge);
-        if (points)
-          this.edgesLayer.findOne<Konva.Arrow>(`#${edge.id}`)?.points(points);
+        const points = this.edgePoints(edge, override);
+        if (!points) return;
+        this.edgesLayer.findOne<Konva.Arrow>(`#${edge.id}`)?.points(points);
+        const label = this.edgesLayer.findOne<Konva.Label>(`#${edge.id}-label`);
+        const anchor = labelAnchor(points);
+        label?.visible(anchor !== null);
+        if (anchor) label?.position(anchor);
       });
   }
 
-  private edgePoints(edge: CanvasEdge): number[] | null {
-    const source = this.state.node(edge.sourceNodeId);
-    const target = this.state.node(edge.targetNodeId);
+  private edgePoints(edge: CanvasEdge, override?: CanvasNode): number[] | null {
+    const pick = (id: string) =>
+      override?.id === id ? override : this.state.node(id);
+    const source = pick(edge.sourceNodeId);
+    const target = pick(edge.targetNodeId);
     const sourcePort = source?.ports.find((p) => p.id === edge.sourcePortId);
     const targetPort = target?.ports.find((p) => p.id === edge.targetPortId);
     if (!source || !target || !sourcePort || !targetPort) return null;
-    const a = this.portPosition(sourcePort, source);
-    const b = this.portPosition(targetPort, target);
-    return [a.x, a.y, b.x, b.y];
+    return routeEdge(
+      { ...this.portPosition(sourcePort, source), side: sourcePort.side },
+      { ...this.portPosition(targetPort, target), side: targetPort.side },
+    );
   }
 
   /** Absolute canvas position of a port. */
@@ -789,6 +1058,14 @@ export class Canvas implements AfterViewInit, OnDestroy {
     return { x: n.x, y: n.y, width: n.width, height: n.height };
   }
 
+  private selectionWithDescendants(): Set<string> {
+    return new Set(
+      [...this.state.selectedNodeIds()].flatMap((id) =>
+        this.state.descendantIds(id),
+      ),
+    );
+  }
+
   /** Smallest container whose bounds hold the node's centre, excluding itself. */
   private findContainerFor(node: CanvasNode): string | undefined {
     const excluded = new Set(this.state.descendantIds(node.id));
@@ -809,7 +1086,17 @@ export class Canvas implements AfterViewInit, OnDestroy {
   }
 
   private nodeGroup(id: string): Konva.Group | undefined {
-    return this.nodesLayer.findOne<Konva.Group>(`#${id}`);
+    return (
+      this.nodesLayer.findOne<Konva.Group>(`#${id}`) ??
+      this.containersLayer.findOne<Konva.Group>(`#${id}`)
+    );
+  }
+
+  private allNodeGroups(): Konva.Group[] {
+    return [
+      ...this.containersLayer.find<Konva.Group>('.node'),
+      ...this.nodesLayer.find<Konva.Group>('.node'),
+    ];
   }
 
   private toCanvasPoint(p: { x: number; y: number }): { x: number; y: number } {
@@ -832,4 +1119,24 @@ function portId(nodeId: string, port: string): string {
 function parsePortId(id: string): [string, string] {
   const [nodeId, port] = id.split('-port-');
   return [nodeId, port];
+}
+
+const MIN_LABEL_SEGMENT = 60;
+
+/** Midpoint of the longest straight run, where a label won't sit on a node. */
+function labelAnchor(points: number[]): { x: number; y: number } | null {
+  let best: { len: number; i: number } | null = null;
+  for (let i = 0; i + 3 < points.length; i += 2) {
+    const len = Math.hypot(
+      points[i + 2] - points[i],
+      points[i + 3] - points[i + 1],
+    );
+    if (!best || len > best.len) best = { len, i };
+  }
+  if (!best || best.len < MIN_LABEL_SEGMENT) return null;
+  const { i } = best;
+  return {
+    x: (points[i] + points[i + 2]) / 2,
+    y: (points[i + 1] + points[i + 3]) / 2,
+  };
 }

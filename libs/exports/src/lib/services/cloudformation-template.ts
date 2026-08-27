@@ -40,21 +40,18 @@ const RESOURCE_TYPES: Record<AwsServiceType, string> = {
 const LATEST_AL2023 =
   '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}';
 
+const NODE_STUB = 'exports.handler = async () => ({ statusCode: 200 });';
+const PYTHON_STUB =
+  'def handler(event, context):\n    return {"statusCode": 200}';
+
 const DEFAULT_PROPS: Partial<Record<AwsServiceType, Props>> = {
   vpc: {
     CidrBlock: '10.0.0.0/16',
     EnableDnsSupport: true,
     EnableDnsHostnames: true,
   },
-  subnet: { CidrBlock: '10.0.1.0/24' },
   ec2: { InstanceType: 't3.micro', ImageId: LATEST_AL2023 },
-  lambda: {
-    Runtime: 'nodejs22.x',
-    Handler: 'index.handler',
-    Code: {
-      ZipFile: 'exports.handler = async () => ({ statusCode: 200 });',
-    },
-  },
+  lambda: { Runtime: 'nodejs22.x', Handler: 'index.handler' },
   s3: {
     BucketEncryption: {
       ServerSideEncryptionConfiguration: [
@@ -90,7 +87,14 @@ const DEFAULT_PROPS: Partial<Record<AwsServiceType, Props>> = {
   kinesis: { ShardCount: 1 },
 };
 
-const NAT_EIP_PROPS: Props = { Domain: 'vpc' };
+const POLICY = {
+  basic: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+  vpc: 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole',
+  sqs: 'arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole',
+  kinesis: 'arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole',
+  dynamodb:
+    'arn:aws:iam::aws:policy/service-role/AWSLambdaDynamoDBExecutionRole',
+};
 
 /** Per-service AWS principal that may invoke a Lambda. */
 const INVOKE_PRINCIPALS: Partial<Record<AwsServiceType, string>> = {
@@ -98,12 +102,21 @@ const INVOKE_PRINCIPALS: Partial<Record<AwsServiceType, string>> = {
   sns: 'sns.amazonaws.com',
   eventbridge: 'events.amazonaws.com',
   'api-gateway': 'apigateway.amazonaws.com',
+  alb: 'elasticloadbalancing.amazonaws.com',
 };
 
-const STREAM_SOURCES: Partial<Record<AwsServiceType, Props>> = {
-  sqs: { BatchSize: 10 },
-  kinesis: { BatchSize: 100, StartingPosition: 'LATEST' },
-  dynamodb: { BatchSize: 100, StartingPosition: 'LATEST' },
+const STREAM_SOURCES: Partial<
+  Record<AwsServiceType, { props: Props; policy: string }>
+> = {
+  sqs: { props: { BatchSize: 10 }, policy: POLICY.sqs },
+  kinesis: {
+    props: { BatchSize: 100, StartingPosition: 'LATEST' },
+    policy: POLICY.kinesis,
+  },
+  dynamodb: {
+    props: { BatchSize: 100, StartingPosition: 'LATEST' },
+    policy: POLICY.dynamodb,
+  },
 };
 
 export function buildTemplate(
@@ -130,6 +143,12 @@ class Builder {
   readonly parameters: Record<string, Props> = {};
   private readonly ids = new Map<string, string>();
   private readonly byId: Map<string, CanvasNode>;
+  /** Managed policies each Lambda's role must carry, keyed by Lambda node id. */
+  private readonly lambdaPolicies = new Map<string, Set<string>>();
+  /** Logical id of the user-drawn role attached to a Lambda, if any. */
+  private readonly lambdaRoles = new Map<string, string>();
+  private readonly gatewayAttachments = new Map<string, string>();
+  private readonly volumeCount = new Map<string, number>();
 
   constructor(private nodes: CanvasNode[]) {
     this.byId = new Map(nodes.map((n) => [n.id, n]));
@@ -156,13 +175,45 @@ class Builder {
     const userProps = Object.fromEntries(
       Object.entries(node.properties).map(([k, v]) => [k, coerce(v)]),
     );
+    const props: Props = { ...DEFAULT_PROPS[node.type], ...userProps };
     this.resources[this.id(node.id)] = {
       Type: RESOURCE_TYPES[node.type],
-      Properties: { ...DEFAULT_PROPS[node.type], ...userProps },
+      Properties: props,
     };
-    if (node.type === 'rds') {
-      this.parameters['DBUsername'] = { Type: 'String', Default: 'admin' };
-      this.parameters['DBPassword'] = { Type: 'String', NoEcho: true };
+
+    switch (node.type) {
+      case 'rds':
+        this.parameters['DBUsername'] = { Type: 'String', Default: 'dbadmin' };
+        this.parameters['DBPassword'] = { Type: 'String', NoEcho: true };
+        break;
+      case 'lambda':
+        props['Code'] ??= {
+          ZipFile: String(props['Runtime']).startsWith('python')
+            ? PYTHON_STUB
+            : NODE_STUB,
+        };
+        break;
+      case 'dynamodb':
+        if (props['BillingMode'] === 'PROVISIONED') {
+          props['ProvisionedThroughput'] ??= {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5,
+          };
+        }
+        break;
+      case 'api-gateway':
+        props['Name'] ??= node.label;
+        break;
+      case 'subnet': {
+        // Spread sibling subnets over AZs and non-overlapping CIDRs.
+        const vpc = this.ancestor(node, 'vpc');
+        const index = this.subnetsIn(vpc).indexOf(node);
+        props['CidrBlock'] ??= `10.0.${index + 1}.0/24`;
+        props['AvailabilityZone'] ??= {
+          'Fn::Select': [index % 2, { 'Fn::GetAZs': '' }],
+        };
+        break;
+      }
     }
   }
 
@@ -170,6 +221,7 @@ class Builder {
     const vpc = this.ancestor(node, 'vpc');
     const subnet = this.ancestor(node, 'subnet');
     const props = this.props(node.id);
+    const vpcSubnets = this.subnetsIn(vpc).map((s) => ref(this.id(s.id)));
 
     switch (node.type) {
       case 'subnet':
@@ -184,18 +236,21 @@ class Builder {
           const eip = `${this.id(node.id)}Eip`;
           this.resources[eip] = {
             Type: 'AWS::EC2::EIP',
-            Properties: NAT_EIP_PROPS,
+            Properties: { Domain: 'vpc' },
           };
           props['SubnetId'] = ref(this.id(subnet.id));
           props['AllocationId'] = getAtt(eip, 'AllocationId');
         }
         break;
       case 'lambda':
-        if (subnet)
+        if (subnet) {
           this.vpcConfig(node.id, 'SubnetIds', ref(this.id(subnet.id)));
+          this.policy(node.id, POLICY.vpc);
+        }
         break;
       case 'alb':
-        if (subnet) push(props, 'Subnets', ref(this.id(subnet.id)));
+        // ALBs need two subnets in different AZs; use every subnet in the VPC.
+        if (subnet) props['Subnets'] = vpcSubnets;
         break;
       case 'rds':
         if (subnet) {
@@ -204,7 +259,7 @@ class Builder {
             Type: 'AWS::RDS::DBSubnetGroup',
             Properties: {
               DBSubnetGroupDescription: `Subnets for ${node.label}`,
-              SubnetIds: [ref(this.id(subnet.id))],
+              SubnetIds: vpcSubnets,
             },
           };
           props['DBSubnetGroupName'] = ref(group);
@@ -232,80 +287,75 @@ class Builder {
         this.applyNetwork(source, target);
         break;
       default:
-        this.dependsOn(target.id, source.id);
+        this.dependsOn(target.id, this.id(source.id));
     }
   }
 
   private applyTrigger(source: CanvasNode, target: CanvasNode, p: Props): void {
     const sourceId = this.id(source.id);
     const targetId = this.id(target.id);
-    const fnArn = getAtt(targetId, 'Arn');
+    const targetArn = getAtt(targetId, 'Arn');
 
-    if (target.type === 'lambda' && INVOKE_PRINCIPALS[source.type]) {
-      this.resources[`${targetId}${sourceId}Permission`] = {
-        Type: 'AWS::Lambda::Permission',
-        Properties: {
-          Action: 'lambda:InvokeFunction',
-          FunctionName: ref(targetId),
-          Principal: INVOKE_PRINCIPALS[source.type],
-          SourceAccount: ref('AWS::AccountId'),
-        },
-      };
-    }
-
-    if (target.type === 'lambda' && STREAM_SOURCES[source.type]) {
-      const arnAttr = source.type === 'dynamodb' ? 'StreamArn' : 'Arn';
-      if (source.type === 'dynamodb') {
-        this.props(source.id)['StreamSpecification'] = {
-          StreamViewType: 'NEW_AND_OLD_IMAGES',
+    if (target.type === 'lambda') {
+      const principal = INVOKE_PRINCIPALS[source.type];
+      if (principal) {
+        this.resources[`${targetId}${sourceId}Permission`] = {
+          Type: 'AWS::Lambda::Permission',
+          Properties: {
+            Action: 'lambda:InvokeFunction',
+            FunctionName: ref(targetId),
+            Principal: principal,
+            SourceAccount: ref('AWS::AccountId'),
+          },
         };
       }
-      this.resources[`${targetId}${sourceId}Mapping`] = {
-        Type: 'AWS::Lambda::EventSourceMapping',
-        Properties: {
-          ...STREAM_SOURCES[source.type],
-          ...p,
-          EventSourceArn: getAtt(sourceId, arnAttr),
-          FunctionName: ref(targetId),
-        },
-      };
-      return;
+      const stream = STREAM_SOURCES[source.type];
+      if (stream) {
+        const arnAttr = source.type === 'dynamodb' ? 'StreamArn' : 'Arn';
+        if (source.type === 'dynamodb') {
+          this.props(source.id)['StreamSpecification'] = {
+            StreamViewType: 'NEW_AND_OLD_IMAGES',
+          };
+        }
+        this.resources[`${targetId}${sourceId}Mapping`] = {
+          Type: 'AWS::Lambda::EventSourceMapping',
+          Properties: {
+            ...stream.props,
+            ...p,
+            EventSourceArn: getAtt(sourceId, arnAttr),
+            FunctionName: ref(targetId),
+          },
+        };
+        this.policy(target.id, stream.policy);
+        return;
+      }
     }
 
     switch (source.type) {
-      case 's3': {
-        const config: Props = {
-          Event: p['Event'] ?? 's3:ObjectCreated:*',
-          Function: fnArn,
-        };
-        if (p['Prefix']) {
-          config['Filter'] = {
-            S3Key: { Rules: [{ Name: 'prefix', Value: p['Prefix'] }] },
-          };
-        }
-        push(this.notification(source.id), 'LambdaConfigurations', config);
-        this.dependsOn(source.id, `${targetId}${sourceId}Permission`, true);
+      case 's3':
+        this.applyS3Notification(source, target, p);
         break;
-      }
       case 'sns':
         this.resources[`${sourceId}${targetId}Subscription`] = {
           Type: 'AWS::SNS::Subscription',
           Properties: {
             TopicArn: ref(sourceId),
             Protocol: target.type === 'sqs' ? 'sqs' : 'lambda',
-            Endpoint: getAtt(targetId, 'Arn'),
+            Endpoint: targetArn,
           },
         };
+        if (target.type === 'sqs') {
+          this.allowQueueSender(target, 'sns.amazonaws.com', ref(sourceId));
+        }
         break;
       case 'eventbridge': {
         const rule: Props = {
-          EventBusName: ref(sourceId),
-          Targets: [{ Arn: getAtt(targetId, 'Arn'), Id: targetId }],
+          Targets: [{ Arn: targetArn, Id: targetId }],
         };
         if (p['ScheduleExpression']) {
           rule['ScheduleExpression'] = p['ScheduleExpression'];
-          delete rule['EventBusName'];
         } else {
+          rule['EventBusName'] = ref(sourceId);
           rule['EventPattern'] = {
             source: [{ 'Fn::Sub': '${AWS::StackName}' }],
           };
@@ -314,6 +364,13 @@ class Builder {
           Type: 'AWS::Events::Rule',
           Properties: rule,
         };
+        if (target.type === 'sqs') {
+          this.allowQueueSender(
+            target,
+            'events.amazonaws.com',
+            getAtt(`${sourceId}${targetId}Rule`, 'Arn'),
+          );
+        }
         break;
       }
       case 'api-gateway': {
@@ -323,7 +380,7 @@ class Builder {
           Properties: {
             ApiId: ref(sourceId),
             IntegrationType: 'AWS_PROXY',
-            IntegrationUri: fnArn,
+            IntegrationUri: targetArn,
             PayloadFormatVersion: '2.0',
           },
         };
@@ -335,9 +392,108 @@ class Builder {
             Target: { 'Fn::Sub': `integrations/\${${integration}}` },
           },
         };
+        this.resources[`${sourceId}Stage`] ??= {
+          Type: 'AWS::ApiGatewayV2::Stage',
+          Properties: {
+            ApiId: ref(sourceId),
+            StageName: '$default',
+            AutoDeploy: true,
+          },
+        };
         break;
       }
     }
+  }
+
+  private applyS3Notification(
+    bucket: CanvasNode,
+    target: CanvasNode,
+    p: Props,
+  ): void {
+    const bucketId = this.id(bucket.id);
+    const targetId = this.id(target.id);
+    const config: Props = { Event: p['Event'] ?? 's3:ObjectCreated:*' };
+    if (p['Prefix']) {
+      config['Filter'] = {
+        S3Key: { Rules: [{ Name: 'prefix', Value: p['Prefix'] }] },
+      };
+    }
+    const notification = this.notification(bucket.id);
+    switch (target.type) {
+      case 'lambda':
+        push(notification, 'LambdaConfigurations', {
+          ...config,
+          Function: getAtt(targetId, 'Arn'),
+        });
+        this.dependsOn(bucket.id, `${targetId}${bucketId}Permission`);
+        break;
+      case 'sqs':
+        push(notification, 'QueueConfigurations', {
+          ...config,
+          Queue: getAtt(targetId, 'Arn'),
+        });
+        this.allowQueueSender(target, 's3.amazonaws.com');
+        this.dependsOn(bucket.id, `${targetId}Policy`);
+        break;
+      case 'sns':
+        push(notification, 'TopicConfigurations', {
+          ...config,
+          Topic: ref(targetId),
+        });
+        this.resources[`${targetId}Policy`] ??= {
+          Type: 'AWS::SNS::TopicPolicy',
+          Properties: {
+            Topics: [ref(targetId)],
+            PolicyDocument: {
+              Version: '2012-10-17',
+              Statement: [
+                {
+                  Effect: 'Allow',
+                  Principal: { Service: 's3.amazonaws.com' },
+                  Action: 'sns:Publish',
+                  Resource: ref(targetId),
+                  Condition: {
+                    StringEquals: {
+                      'aws:SourceAccount': ref('AWS::AccountId'),
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        };
+        this.dependsOn(bucket.id, `${targetId}Policy`);
+        break;
+    }
+  }
+
+  /** Grants a service principal permission to send to an SQS queue. */
+  private allowQueueSender(
+    queue: CanvasNode,
+    service: string,
+    sourceArn?: Props,
+  ): void {
+    const queueId = this.id(queue.id);
+    const policyId = `${queueId}Policy`;
+    this.resources[policyId] ??= {
+      Type: 'AWS::SQS::QueuePolicy',
+      Properties: {
+        Queues: [ref(queueId)],
+        PolicyDocument: { Version: '2012-10-17', Statement: [] },
+      },
+    };
+    const doc = (this.resources[policyId].Properties as Props)[
+      'PolicyDocument'
+    ] as Props;
+    push(doc, 'Statement', {
+      Effect: 'Allow',
+      Principal: { Service: service },
+      Action: 'sqs:SendMessage',
+      Resource: getAtt(queueId, 'Arn'),
+      Condition: sourceArn
+        ? { ArnEquals: { 'aws:SourceArn': sourceArn } }
+        : { StringEquals: { 'aws:SourceAccount': ref('AWS::AccountId') } },
+    });
   }
 
   private applyAttachment(source: CanvasNode, target: CanvasNode): void {
@@ -348,6 +504,8 @@ class Builder {
     if (source.type === 'iam-role') {
       if (target.type === 'lambda') {
         targetProps['Role'] = getAtt(sourceId, 'Arn');
+        this.lambdaRoles.set(target.id, sourceId);
+        this.policy(target.id, POLICY.basic);
       } else if (target.type === 'ec2') {
         const profile = `${sourceId}InstanceProfile`;
         this.resources[profile] ??= {
@@ -368,12 +526,18 @@ class Builder {
         push(targetProps, key[target.type] as string, ref(sourceId));
       }
     } else if (source.type === 'ebs' && target.type === 'ec2') {
+      const index = this.volumeCount.get(target.id) ?? 0;
+      this.volumeCount.set(target.id, index + 1);
+      this.props(source.id)['AvailabilityZone'] = getAtt(
+        targetId,
+        'AvailabilityZone',
+      );
       this.resources[`${targetId}${sourceId}Attachment`] = {
         Type: 'AWS::EC2::VolumeAttachment',
         Properties: {
           InstanceId: ref(targetId),
           VolumeId: ref(sourceId),
-          Device: '/dev/sdf',
+          Device: `/dev/sd${String.fromCharCode(102 + index)}`,
         },
       };
     }
@@ -384,26 +548,45 @@ class Builder {
     const targetId = this.id(target.id);
 
     if (source.type === 'internet-gateway' && target.type === 'vpc') {
-      this.resources[`${targetId}${sourceId}Attachment`] = {
+      const attachment = `${targetId}${sourceId}Attachment`;
+      this.resources[attachment] = {
         Type: 'AWS::EC2::VPCGatewayAttachment',
         Properties: { VpcId: ref(targetId), InternetGatewayId: ref(sourceId) },
       };
-    } else if (source.type === 'alb' && target.type === 'ec2') {
+      this.gatewayAttachments.set(target.id, attachment);
+    } else if (source.type === 'alb') {
       const vpc = this.ancestor(source, 'vpc');
       const group = `${sourceId}TargetGroup`;
       this.resources[group] ??= {
         Type: 'AWS::ElasticLoadBalancingV2::TargetGroup',
         Properties: {
-          Port: 80,
-          Protocol: 'HTTP',
-          TargetType: 'instance',
-          ...(vpc ? { VpcId: ref(this.id(vpc.id)) } : {}),
+          TargetType: target.type === 'lambda' ? 'lambda' : 'instance',
+          ...(target.type === 'lambda'
+            ? {}
+            : {
+                Port: 80,
+                Protocol: 'HTTP',
+                VpcId: vpc && ref(this.id(vpc.id)),
+              }),
           Targets: [],
         },
       };
-      push(this.resources[group].Properties as Props, 'Targets', {
-        Id: ref(targetId),
-      });
+      const groupProps = this.resources[group].Properties as Props;
+      if (target.type === 'lambda') {
+        push(groupProps, 'Targets', { Id: getAtt(targetId, 'Arn') });
+        const permission = `${targetId}${sourceId}Permission`;
+        this.resources[permission] = {
+          Type: 'AWS::Lambda::Permission',
+          Properties: {
+            Action: 'lambda:InvokeFunction',
+            FunctionName: ref(targetId),
+            Principal: INVOKE_PRINCIPALS.alb,
+          },
+        };
+        this.resources[group].DependsOn = [permission];
+      } else {
+        push(groupProps, 'Targets', { Id: ref(targetId) });
+      }
       this.resources[`${sourceId}Listener`] ??= {
         Type: 'AWS::ElasticLoadBalancingV2::Listener',
         Properties: {
@@ -414,27 +597,71 @@ class Builder {
         },
       };
     } else {
-      this.dependsOn(target.id, source.id);
+      this.dependsOn(target.id, sourceId);
     }
   }
 
   finish(): void {
-    const roleless = this.nodes.filter(
-      (n) => n.type === 'lambda' && !this.props(n.id)['Role'],
-    );
-    if (roleless.length === 0) return;
-    this.resources['LambdaExecutionRole'] = {
+    this.nodes.forEach((node) => {
+      if (node.type === 'lambda') this.finishLambda(node);
+      if (node.type === 'nat-gateway') {
+        const vpc = this.ancestor(node, 'vpc');
+        const attachment = vpc && this.gatewayAttachments.get(vpc.id);
+        if (attachment) this.dependsOn(node.id, attachment);
+      }
+    });
+  }
+
+  private finishLambda(node: CanvasNode): void {
+    const props = this.props(node.id);
+    const config = props['VpcConfig'] as Props | undefined;
+    if (config && !config['SecurityGroupIds']) {
+      // Lambda requires SubnetIds and SecurityGroupIds together.
+      const vpc = this.ancestor(node, 'vpc');
+      const sg = `${this.id(node.id)}SecurityGroup`;
+      this.resources[sg] = {
+        Type: 'AWS::EC2::SecurityGroup',
+        Properties: {
+          GroupDescription: `Access for ${node.label}`,
+          ...(vpc ? { VpcId: ref(this.id(vpc.id)) } : {}),
+        },
+      };
+      config['SecurityGroupIds'] = [ref(sg)];
+    }
+
+    const policies = this.lambdaPolicies.get(node.id) ?? new Set<string>();
+    const roleId = this.lambdaRoles.get(node.id);
+    if (roleId) {
+      const role = this.resources[roleId].Properties as Props;
+      const arns = new Set([
+        ...((role['ManagedPolicyArns'] as string[] | undefined) ?? []),
+        ...policies,
+      ]);
+      role['ManagedPolicyArns'] = [...arns];
+      return;
+    }
+
+    const shared = 'LambdaExecutionRole';
+    this.resources[shared] ??= {
       Type: 'AWS::IAM::Role',
       Properties: {
         AssumeRolePolicyDocument: assumeRole('lambda.amazonaws.com'),
-        ManagedPolicyArns: [
-          'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
-        ],
+        ManagedPolicyArns: [POLICY.basic],
       },
     };
-    roleless.forEach((n) => {
-      this.props(n.id)['Role'] = getAtt('LambdaExecutionRole', 'Arn');
+    const arns = (this.resources[shared].Properties as Props)[
+      'ManagedPolicyArns'
+    ] as string[];
+    policies.forEach((p) => {
+      if (!arns.includes(p)) arns.push(p);
     });
+    props['Role'] = getAtt(shared, 'Arn');
+  }
+
+  private policy(lambdaId: string, arn: string): void {
+    const set = this.lambdaPolicies.get(lambdaId) ?? new Set<string>();
+    set.add(arn);
+    this.lambdaPolicies.set(lambdaId, set);
   }
 
   private ancestor(
@@ -448,6 +675,13 @@ class Builder {
     return current;
   }
 
+  private subnetsIn(vpc: CanvasNode | undefined): CanvasNode[] {
+    if (!vpc) return [];
+    return this.nodes.filter(
+      (n) => n.type === 'subnet' && this.ancestor(n, 'vpc') === vpc,
+    );
+  }
+
   private vpcConfig(nodeId: string, key: string, value: unknown): void {
     const props = this.props(nodeId);
     const config = (props['VpcConfig'] ??= {}) as Props;
@@ -459,11 +693,11 @@ class Builder {
     return (props['NotificationConfiguration'] ??= {}) as Props;
   }
 
-  /** Adds a DependsOn entry; `raw` when the dependency is a logical id already. */
-  private dependsOn(nodeId: string, dependency: string, raw = false): void {
+  private dependsOn(nodeId: string, logicalId: string): void {
     const resource = this.resources[this.id(nodeId)];
-    const dep = raw ? dependency : this.id(dependency);
-    resource.DependsOn = [...new Set([...(resource.DependsOn ?? []), dep])];
+    resource.DependsOn = [
+      ...new Set([...(resource.DependsOn ?? []), logicalId]),
+    ];
   }
 }
 

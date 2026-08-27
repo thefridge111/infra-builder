@@ -12,7 +12,11 @@ or a CloudFormation template (JSON/YAML).
   validated when drawn and rendered with distinct styles
 - Properties panel for node settings (instance type, runtime, CIDR…) and trigger
   settings (S3 event/prefix, batch size, schedule…)
-- Undo/redo, multi-select (⇧ drag), keyboard nudging, zoom to fit
+- Undo/redo, multi-select (⇧ drag), copy/paste/duplicate, keyboard nudging,
+  zoom to fit, example projects to start from
+- Live validation: misplaced or unconnected resources are marked on the
+  canvas and listed in the side panel; the exporter fills in what AWS needs
+  (subnet AZs and CIDRs, execution-role policies, security groups, API stages)
 - CloudFormation export that follows the diagram: `VpcId`/`SubnetId` from
   containment, `Lambda::Permission` + notifications for S3 triggers,
   `EventSourceMapping` for SQS/Kinesis/DynamoDB, roles, security groups,
