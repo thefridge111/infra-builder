@@ -1,6 +1,5 @@
-import { Component, ViewChild, inject } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { Canvas, Sidebar } from '@infra-builder/canvas';
+import { Component, HostListener, ViewChild, inject } from '@angular/core';
+import { Canvas, Properties, Sidebar } from '@infra-builder/canvas';
 import { CanvasStateService } from '@infra-builder/state';
 import {
   PngExportService,
@@ -10,14 +9,15 @@ import {
 
 @Component({
   selector: 'app-root',
-  imports: [CommonModule, Canvas, Sidebar],
+  imports: [Canvas, Sidebar, Properties],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
 export class App {
-  @ViewChild(Canvas) canvasComponent!: Canvas;
+  @ViewChild(Canvas) canvas!: Canvas;
+  @ViewChild(Properties) properties!: Properties;
 
-  private state = inject(CanvasStateService);
+  protected state = inject(CanvasStateService);
   private pngExport = inject(PngExportService);
   private pdfExport = inject(PdfExportService);
   private cfExport = inject(CloudformationExportService);
@@ -26,16 +26,21 @@ export class App {
   showCfPreview = false;
   cfPreviewContent = '';
 
+  @HostListener('document:keydown.escape')
+  closeCfPreview(): void {
+    this.showCfPreview = false;
+  }
+
+  focusLabel(): void {
+    this.properties.focusLabel();
+  }
+
   async exportPng(): Promise<void> {
-    if (this.canvasComponent) {
-      await this.pngExport.exportToPng(this.canvasComponent.getStage());
-    }
+    await this.pngExport.exportToPng(this.canvas.getStage());
   }
 
   async exportPdf(): Promise<void> {
-    if (this.canvasComponent) {
-      await this.pdfExport.exportToPdf(this.canvasComponent.getStage());
-    }
+    await this.pdfExport.exportToPdf(this.canvas.getStage());
   }
 
   exportCloudFormationJson(): void {
@@ -66,13 +71,8 @@ export class App {
     this.showCfPreview = true;
   }
 
-  closeCfPreview(): void {
-    this.showCfPreview = false;
-  }
-
   exportProject(): void {
-    const state = this.state.state();
-    const json = JSON.stringify(state, null, 2);
+    const json = JSON.stringify(this.state.state(), null, 2);
     this.cfExport.downloadFile(
       json,
       'aws-architecture-project.json',
@@ -88,18 +88,12 @@ export class App {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const state = JSON.parse(reader.result as string);
-        this.state.loadState(state);
-        setTimeout(() => this.reRenderCanvas(), 0);
+        this.state.loadState(JSON.parse(reader.result as string));
       } catch (e) {
         console.error('Failed to import project:', e);
       }
+      input.value = '';
     };
     reader.readAsText(file);
-  }
-
-  private reRenderCanvas(): void {
-    // Force canvas re-render by triggering change detection
-    // The canvas component will re-render on next tick
   }
 }

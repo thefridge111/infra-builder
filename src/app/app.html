@@ -5,6 +5,24 @@
     </div>
     <div class="header-actions">
       <div class="btn-group">
+        <button
+          class="btn"
+          [disabled]="!state.canUndo()"
+          (click)="state.undo()"
+          title="Undo (⌘Z)"
+        >
+          Undo
+        </button>
+        <button
+          class="btn"
+          [disabled]="!state.canRedo()"
+          (click)="state.redo()"
+          title="Redo (⇧⌘Z)"
+        >
+          Redo
+        </button>
+      </div>
+      <div class="btn-group">
         <button class="btn" (click)="exportPng()">PNG</button>
         <button class="btn" (click)="exportPdf()">PDF</button>
       </div>
@@ -34,9 +52,12 @@
 
   <main class="app-main">
     <lib-sidebar
-      (deleteRequested)="canvasComponent?.deleteSelection()"
+      (deleteRequested)="canvas.deleteSelection()"
+      (fitRequested)="canvas.fitToContent()"
+      (addRequested)="canvas.addNode($event)"
     ></lib-sidebar>
-    <lib-canvas></lib-canvas>
+    <lib-canvas (nodeActivated)="focusLabel()"></lib-canvas>
+    <lib-properties></lib-properties>
   </main>
 </div>
 
@@ -45,10 +66,8 @@
 <div
   class="modal-overlay"
   (click)="closeCfPreview()"
-  (keydown.escape)="closeCfPreview()"
   role="dialog"
   aria-modal="true"
-  tabindex="0"
 >
   <div class="modal-content" (click)="$event.stopPropagation()">
     <div class="modal-header">

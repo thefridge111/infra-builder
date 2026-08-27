@@ -1,14 +1,22 @@
-import { AwsServiceDefinition } from '@infra-builder/state';
+import { AwsServiceDefinition, Port } from '@infra-builder/state';
+
+const FOUR_PORTS: Port[] = [
+  { id: 'top', side: 'top', offset: 0.5 },
+  { id: 'right', side: 'right', offset: 0.5 },
+  { id: 'bottom', side: 'bottom', offset: 0.5 },
+  { id: 'left', side: 'left', offset: 0.5 },
+];
 
 export const AWS_SERVICES: AwsServiceDefinition[] = [
   {
     type: 'vpc',
     label: 'VPC',
+    container: true,
     category: 'Networking',
     color: '#8C4FFF',
     iconPath: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
-    defaultWidth: 200,
-    defaultHeight: 140,
+    defaultWidth: 420,
+    defaultHeight: 300,
     defaultPorts: [
       { id: 'top', side: 'top', offset: 0.5 },
       { id: 'right', side: 'right', offset: 0.5 },
@@ -19,11 +27,12 @@ export const AWS_SERVICES: AwsServiceDefinition[] = [
   {
     type: 'subnet',
     label: 'Subnet',
+    container: true,
     category: 'Networking',
     color: '#8C4FFF',
     iconPath: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
-    defaultWidth: 160,
-    defaultHeight: 100,
+    defaultWidth: 320,
+    defaultHeight: 200,
     defaultPorts: [
       { id: 'top', side: 'top', offset: 0.5 },
       { id: 'right', side: 'right', offset: 0.5 },
@@ -214,6 +223,59 @@ export const AWS_SERVICES: AwsServiceDefinition[] = [
       { id: 'right-bottom', side: 'right', offset: 0.7 },
     ],
   },
+  {
+    type: 'sqs',
+    label: 'SQS',
+    category: 'Integration',
+    color: '#E7157B',
+    iconPath: 'M3 6h18v4H3V6zm0 6h18v4H3v-4zm0 6h12v2H3v-2z',
+    defaultWidth: 120,
+    defaultHeight: 90,
+    defaultPorts: FOUR_PORTS,
+  },
+  {
+    type: 'sns',
+    label: 'SNS',
+    category: 'Integration',
+    color: '#E7157B',
+    iconPath: 'M12 3l9 6-9 6-9-6 9-6zm0 15l9-6v3l-9 6-9-6v-3l9 6z',
+    defaultWidth: 120,
+    defaultHeight: 90,
+    defaultPorts: FOUR_PORTS,
+  },
+  {
+    type: 'eventbridge',
+    label: 'EventBridge',
+    category: 'Integration',
+    color: '#E7157B',
+    iconPath: 'M4 12l4-4v3h8V8l4 4-4 4v-3H8v3l-4-4z',
+    defaultWidth: 120,
+    defaultHeight: 90,
+    defaultPorts: FOUR_PORTS,
+  },
+  {
+    type: 'api-gateway',
+    label: 'API Gateway',
+    category: 'Integration',
+    color: '#E7157B',
+    iconPath: 'M4 4h16v4H4V4zm0 6h7v10H4V10zm9 0h7v10h-7V10z',
+    defaultWidth: 120,
+    defaultHeight: 90,
+    defaultPorts: FOUR_PORTS,
+  },
+  {
+    type: 'kinesis',
+    label: 'Kinesis',
+    category: 'Integration',
+    color: '#8C4FFF',
+    iconPath:
+      'M3 8c3 0 3 4 6 4s3-4 6-4 3 4 6 4v2c-3 0-3-4-6-4s-3 4-6 4-3-4-6-4V8z',
+    defaultWidth: 120,
+    defaultHeight: 90,
+    defaultPorts: FOUR_PORTS,
+  },
 ];
 
 export const AWS_CATEGORIES = [...new Set(AWS_SERVICES.map((s) => s.category))];
+
+export const AWS_SERVICE_MAP = new Map(AWS_SERVICES.map((s) => [s.type, s]));

@@ -1,7 +1,7 @@
 <aside class="sidebar">
   <div class="sidebar-header">
     <h1 class="sidebar-title">AWS Builder</h1>
-    <p class="sidebar-subtitle">Drag services to canvas</p>
+    <p class="sidebar-subtitle">Drag or click a service to add it</p>
   </div>
 
   <div class="search-wrapper">
@@ -18,10 +18,12 @@
     <div class="category-group">
       <h3 class="category-title">{{ category }}</h3>
       @for (service of filteredServices(category); track service.type) {
-      <div
+      <button
+        type="button"
         class="service-item"
         draggable="true"
         (dragstart)="onDragStart($event, service)"
+        (click)="addRequested.emit(service)"
       >
         <div class="service-icon" [style.background-color]="service.color">
           <svg viewBox="0 0 24 24" class="icon">
@@ -29,7 +31,7 @@
           </svg>
         </div>
         <span class="service-label">{{ service.label }}</span>
-      </div>
+      </button>
       }
     </div>
     }
@@ -40,8 +42,8 @@
       <button class="zoom-btn" (click)="zoomOut()">-</button>
       <span class="zoom-value">{{ zoomPercent }}%</span>
       <button class="zoom-btn" (click)="zoomIn()">+</button>
-      <button class="zoom-btn fit" (click)="zoomFit()">Fit</button>
+      <button class="zoom-btn fit" (click)="fitRequested.emit()">Fit</button>
     </div>
-    <button class="delete-btn" (click)="deleteSelected()">Delete</button>
+    <button class="delete-btn" (click)="deleteRequested.emit()">Delete</button>
   </div>
 </aside>

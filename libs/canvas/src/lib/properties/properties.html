@@ -1,0 +1,82 @@
+<aside class="properties">
+  @if (node(); as node) {
+  <div class="panel-header">
+    <span class="eyebrow">{{ typeLabel() }}</span>
+  </div>
+  <div class="field">
+    <label for="node-label">Name</label>
+    <input
+      #labelInput
+      id="node-label"
+      type="text"
+      [value]="node.label"
+      (change)="setLabel(labelInput.value)"
+      (keydown.enter)="labelInput.blur()"
+    />
+  </div>
+  @for (field of nodeFields(); track field.key) {
+  <div class="field">
+    <label [for]="'node-' + field.key">{{ field.label }}</label>
+    @if (field.options) {
+    <select
+      [id]="'node-' + field.key"
+      [value]="node.properties[field.key] || ''"
+      (change)="setNodeProperty(field.key, $any($event.target).value)"
+    >
+      <option value="">Default</option>
+      @for (option of field.options; track option) {
+      <option [value]="option">{{ option }}</option>
+      }
+    </select>
+    } @else {
+    <input
+      [id]="'node-' + field.key"
+      type="text"
+      [value]="node.properties[field.key] || ''"
+      [placeholder]="field.placeholder || ''"
+      (change)="setNodeProperty(field.key, $any($event.target).value)"
+    />
+    }
+  </div>
+  } } @else if (edge(); as edge) {
+  <div class="panel-header">
+    <span class="eyebrow">{{ kindLabel() }}</span>
+    <p class="summary">{{ edgeSummary() }}</p>
+  </div>
+  @for (field of edgeFields(); track field.key) {
+  <div class="field">
+    <label [for]="'edge-' + field.key">{{ field.label }}</label>
+    @if (field.options) {
+    <select
+      [id]="'edge-' + field.key"
+      [value]="edge.properties?.[field.key] || ''"
+      (change)="setEdgeProperty(field.key, $any($event.target).value)"
+    >
+      <option value="">Default</option>
+      @for (option of field.options; track option) {
+      <option [value]="option">{{ option }}</option>
+      }
+    </select>
+    } @else {
+    <input
+      [id]="'edge-' + field.key"
+      type="text"
+      [value]="edge.properties?.[field.key] || ''"
+      [placeholder]="field.placeholder || ''"
+      (change)="setEdgeProperty(field.key, $any($event.target).value)"
+    />
+    }
+  </div>
+  } @empty {
+  <p class="hint">No options for this connection.</p>
+  } } @else {
+  <p class="hint">Select a node or connection to edit it.</p>
+  <ul class="shortcuts">
+    <li><kbd>Drag</kbd> pan</li>
+    <li><kbd>⇧ Drag</kbd> select area</li>
+    <li><kbd>Scroll</kbd> zoom</li>
+    <li><kbd>⌘Z</kbd> undo · <kbd>⇧⌘Z</kbd> redo</li>
+    <li><kbd>←↑→↓</kbd> nudge · <kbd>⌫</kbd> delete</li>
+  </ul>
+  }
+</aside>

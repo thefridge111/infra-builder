@@ -7,72 +7,85 @@ import {
   inject,
   HostListener,
   effect,
+  output,
 } from '@angular/core';
-import { CommonModule } from '@angular/common';
 import Konva from 'konva';
-import { CanvasStateService } from '@infra-builder/state';
-import { AwsServiceDefinition, CanvasNode, Port } from '@infra-builder/state';
-import { AWS_SERVICES } from '@infra-builder/aws-icons';
+import {
+  CanvasStateService,
+  AwsServiceDefinition,
+  AwsServiceType,
+  CanvasNode,
+  CanvasEdge,
+  EdgeKind,
+  Port,
+} from '@infra-builder/state';
+import { AWS_SERVICE_MAP, resolveEdge } from '@infra-builder/aws-icons';
+
+const GRID_SIZE = 20;
+const HEADER_HEIGHT = 28;
+const MIN_CONTAINER_SIZE = 120;
+const FONT = 'Inter, system-ui, sans-serif';
+
+const EDGE_STYLE: Record<
+  EdgeKind,
+  { stroke: string; dash?: number[]; arrow: boolean }
+> = {
+  trigger: { stroke: '#e7157b', dash: [8, 4], arrow: true },
+  attaches: { stroke: '#9ca3af', dash: [2, 3], arrow: false },
+  network: { stroke: '#2563eb', arrow: true },
+  'depends-on': { stroke: '#6b7280', arrow: true },
+};
 
 @Component({
   selector: 'lib-canvas',
-  imports: [CommonModule],
   templateUrl: './canvas.html',
   styleUrl: './canvas.scss',
 })
 export class Canvas implements AfterViewInit, OnDestroy {
   @ViewChild('canvasContainer') canvasContainer!: ElementRef<HTMLDivElement>;
 
-  private state = inject(CanvasStateService);
-  private stage!: Konva.Stage;
-  private layer!: Konva.Layer;
-  private gridLayer!: Konva.Layer;
-  private nodesLayer!: Konva.Layer;
-  private edgesLayer!: Konva.Layer;
-  private portsLayer!: Konva.Layer;
-  private tempLine: Konva.Line | null = null;
+  /** Emitted on node double-click so the host can focus the label editor. */
+  nodeActivated = output<string>();
 
-  private readonly GRID_SIZE = 20;
-  private isPanning = false;
-  private lastPointerPosition = { x: 0, y: 0 };
-  private dragServiceDef: AwsServiceDefinition | null = null;
+  private state = inject(CanvasStateService);
+  private stage?: Konva.Stage;
+  private gridLayer!: Konva.Layer;
+  private edgesLayer!: Konva.Layer;
+  private nodesLayer!: Konva.Layer;
+  private portsLayer!: Konva.Layer;
+  private overlayLayer!: Konva.Layer;
+  private transformer!: Konva.Transformer;
+
+  private tempLine: Konva.Line | null = null;
+  private selectionRect: Konva.Rect | null = null;
+  private pointerMode: 'none' | 'pan' | 'select' = 'none';
+  private pointerStart = { x: 0, y: 0 };
+  private dragOrigin = new Map<string, { x: number; y: number }>();
+
+  constructor() {
+    effect(() => {
+      this.state.version();
+      if (this.stage) this.renderAll();
+    });
+  }
 
   ngAfterViewInit(): void {
     this.initKonva();
-    this.setupEventListeners();
-    this.setupKeyboardHandlers();
-    this.renderExistingState();
-    this.watchStateChanges();
-  }
-
-  private renderExistingState(): void {
-    this.state.nodes().forEach((node) => {
-      const serviceDef = AWS_SERVICES.find((s) => s.type === node.type);
-      if (serviceDef) {
-        this.renderNode(node, serviceDef);
-      }
-    });
-    this.state.edges().forEach((edge) => {
-      this.renderEdge(edge);
-    });
-    this.updateTransform();
-  }
-
-  private watchStateChanges(): void {
-    effect(() => {
-      this.state.nodes();
-      this.state.edges();
-      this.updateTransform();
-    });
+    this.renderAll();
   }
 
   ngOnDestroy(): void {
     this.stage?.destroy();
   }
 
+  getStage(): Konva.Stage {
+    return this.stage as Konva.Stage;
+  }
+
+  // --- Setup ---------------------------------------------------------------
+
   private initKonva(): void {
     const container = this.canvasContainer.nativeElement;
-
     this.stage = new Konva.Stage({
       container,
       width: container.clientWidth,
@@ -83,603 +96,740 @@ export class Canvas implements AfterViewInit, OnDestroy {
     this.edgesLayer = new Konva.Layer();
     this.nodesLayer = new Konva.Layer();
     this.portsLayer = new Konva.Layer();
-    this.layer = new Konva.Layer();
+    this.overlayLayer = new Konva.Layer();
+    this.transformer = new Konva.Transformer({
+      rotateEnabled: false,
+      enabledAnchors: [
+        'top-left',
+        'top-right',
+        'bottom-left',
+        'bottom-right',
+        'middle-right',
+        'bottom-center',
+      ],
+      anchorSize: 8,
+      keepRatio: false,
+      borderStroke: '#3b82f6',
+      anchorStroke: '#3b82f6',
+      ignoreStroke: true,
+    });
+    this.overlayLayer.add(this.transformer);
 
-    this.stage.add(this.gridLayer);
-    this.stage.add(this.edgesLayer);
-    this.stage.add(this.nodesLayer);
-    this.stage.add(this.portsLayer);
-    this.stage.add(this.layer);
+    this.stage.add(
+      this.gridLayer,
+      this.edgesLayer,
+      this.nodesLayer,
+      this.portsLayer,
+      this.overlayLayer,
+    );
 
-    this.drawGrid();
     this.setupStageEvents();
-  }
-
-  private setupEventListeners(): void {
-    window.addEventListener('resize', () => this.onResize());
-  }
-
-  private setupKeyboardHandlers(): void {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        const active = document.activeElement;
-        if (
-          active &&
-          (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')
-        ) {
-          return;
-        }
-        e.preventDefault();
-        this.deleteSelection();
-      }
-    };
-    window.addEventListener('keydown', handler);
-  }
-
-  deleteSelection(): void {
-    const nodeIds = [...this.state.selectedNodeIds()];
-    const edgeIds = [...this.state.selectedEdgeIds()];
-
-    nodeIds.forEach((id) => {
-      const group = this.nodesLayer.findOne<Konva.Group>(`#${id}`);
-      if (group) {
-        this.deletePortsForNode(id);
-        group.destroy();
-      }
-      this.state.removeNode(id);
-    });
-
-    edgeIds.forEach((id) => {
-      const line = this.edgesLayer.findOne<Konva.Line>(`#${id}`);
-      line?.destroy();
-      this.state.removeEdge(id);
-    });
-
-    this.nodesLayer.batchDraw();
-    this.edgesLayer.batchDraw();
-  }
-
-  private deletePortsForNode(nodeId: string): void {
-    const node = this.findNodeForId(nodeId);
-    if (!node) return;
-
-    node?.ports.forEach((port) => {
-      const canvasPort = this.portsLayer.findOne<Konva.Group>(
-        this.buildPortId(nodeId, port.id),
-      );
-      const canvasLabel = this.portsLayer.findOne<Konva.Group>(
-        this.buildPortLabelId(nodeId, port.id),
-      );
-
-      canvasPort?.destroy();
-      canvasLabel?.destroy();
-    });
+    this.setupTransformer();
   }
 
   @HostListener('window:resize')
   onResize(): void {
-    if (this.stage && this.canvasContainer) {
-      const container = this.canvasContainer.nativeElement;
-      this.stage.width(container.clientWidth);
-      this.stage.height(container.clientHeight);
-      this.drawGrid();
+    if (!this.stage) return;
+    const container = this.canvasContainer.nativeElement;
+    this.stage.width(container.clientWidth);
+    this.stage.height(container.clientHeight);
+    this.drawGrid();
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  onKeydown(e: KeyboardEvent): void {
+    const target = e.target as HTMLElement;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        this.state.redo();
+      } else {
+        this.state.undo();
+      }
+    } else if (mod && e.key.toLowerCase() === 'y') {
+      e.preventDefault();
+      this.state.redo();
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      this.deleteSelection();
+    } else if (e.key === 'Escape') {
+      this.state.clearSelection();
+      this.refreshSelection();
+    } else if (e.key.startsWith('Arrow')) {
+      e.preventDefault();
+      const step = e.shiftKey ? GRID_SIZE * 5 : GRID_SIZE;
+      const dx =
+        e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+      const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+      this.nudgeSelection(dx, dy);
     }
+  }
+
+  // --- Public actions ------------------------------------------------------
+
+  deleteSelection(): void {
+    this.state.removeEdges([...this.state.selectedEdgeIds()]);
+    this.state.removeNodes([...this.state.selectedNodeIds()]);
+  }
+
+  /** Adds a node at the centre of the current viewport. */
+  addNode(serviceDef: AwsServiceDefinition): void {
+    if (!this.stage) return;
+    const center = this.toCanvasPoint({
+      x: this.stage.width() / 2,
+      y: this.stage.height() / 2,
+    });
+    this.createNode(
+      serviceDef,
+      center.x - serviceDef.defaultWidth / 2,
+      center.y,
+    );
+  }
+
+  fitToContent(): void {
+    const nodes = this.state.nodes();
+    if (!this.stage || nodes.length === 0) {
+      this.state.setZoom(1);
+      this.state.setPan(0, 0);
+      this.updateTransform();
+      return;
+    }
+    const minX = Math.min(...nodes.map((n) => n.x));
+    const minY = Math.min(...nodes.map((n) => n.y));
+    const maxX = Math.max(...nodes.map((n) => n.x + n.width));
+    const maxY = Math.max(...nodes.map((n) => n.y + n.height));
+    const padding = 60;
+    const zoom = Math.min(
+      this.stage.width() / (maxX - minX + padding * 2),
+      this.stage.height() / (maxY - minY + padding * 2),
+      1.5,
+    );
+    this.state.setZoom(zoom);
+    const z = this.state.zoom();
+    this.state.setPan(
+      (this.stage.width() - (maxX - minX) * z) / 2 - minX * z,
+      (this.stage.height() - (maxY - minY) * z) / 2 - minY * z,
+    );
+    this.updateTransform();
+  }
+
+  onDragOver(event: DragEvent): void {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  }
+
+  onDrop(event: DragEvent): void {
+    event.preventDefault();
+    const serviceType = event.dataTransfer?.getData('application/aws-service');
+    const serviceDef = AWS_SERVICE_MAP.get(serviceType as AwsServiceType);
+    if (!serviceDef || !this.stage) return;
+
+    const rect = this.stage.container().getBoundingClientRect();
+    const point = this.toCanvasPoint({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
+    this.createNode(serviceDef, point.x, point.y);
+  }
+
+  private createNode(def: AwsServiceDefinition, x: number, y: number): void {
+    const node: CanvasNode = {
+      id: this.state.createNodeId(),
+      type: def.type,
+      label: def.label,
+      x: snap(x),
+      y: snap(y),
+      width: def.defaultWidth,
+      height: def.defaultHeight,
+      ports: def.defaultPorts.map((p) => ({ ...p })),
+      properties: {},
+    };
+    node.parentId = this.findContainerFor(node);
+    this.state.addNode(node);
+    this.state.selectNode(node.id);
+  }
+
+  // --- Rendering -----------------------------------------------------------
+
+  private renderAll(): void {
+    this.transformer.nodes([]);
+    this.nodesLayer.destroyChildren();
+    this.portsLayer.destroyChildren();
+    this.edgesLayer.destroyChildren();
+
+    const nodes = this.state.nodes();
+    const depth = (n: CanvasNode): number =>
+      n.parentId ? 1 + depth(this.state.node(n.parentId) ?? n) : 0;
+    [...nodes]
+      .sort((a, b) => depth(a) - depth(b))
+      .forEach((node) => {
+        const def = AWS_SERVICE_MAP.get(node.type);
+        if (def) this.renderNode(node, def);
+      });
+    this.state.edges().forEach((edge) => this.renderEdge(edge));
+
+    this.updateTransform();
+    this.drawGrid();
+    this.refreshSelection();
+  }
+
+  private renderNode(node: CanvasNode, def: AwsServiceDefinition): void {
+    const group = new Konva.Group({
+      x: node.x,
+      y: node.y,
+      draggable: true,
+      id: node.id,
+      name: def.container ? 'node container' : 'node',
+    });
+
+    group.add(
+      new Konva.Rect({
+        name: 'body',
+        width: node.width,
+        height: node.height,
+        fill: def.container ? `${def.color}0d` : 'white',
+        stroke: '#d1d5db',
+        strokeWidth: 1,
+        cornerRadius: 4,
+        ...(def.container
+          ? { dash: [6, 4] }
+          : {
+              shadowColor: 'black',
+              shadowBlur: 4,
+              shadowOffset: { x: 2, y: 2 },
+              shadowOpacity: 0.1,
+            }),
+      }),
+      new Konva.Rect({
+        name: 'header',
+        width: node.width,
+        height: HEADER_HEIGHT,
+        fill: def.color,
+        cornerRadius: [4, 4, 0, 0],
+      }),
+      new Konva.Text({
+        name: 'label',
+        text: node.label,
+        fontSize: 12,
+        fontFamily: FONT,
+        fill: 'white',
+        padding: 6,
+        width: node.width,
+        align: 'center',
+        ellipsis: true,
+        wrap: 'none',
+      }),
+      new Konva.Text({
+        name: 'type',
+        text: def.label.toUpperCase(),
+        fontSize: 10,
+        fontFamily: FONT,
+        fill: '#6b7280',
+        y: HEADER_HEIGHT + 8,
+        width: node.width,
+        align: def.container ? 'right' : 'center',
+        padding: def.container ? 6 : 0,
+      }),
+    );
+
+    node.ports.forEach((port) => this.renderPort(node, port));
+
+    group.on('pointerdown', (e) => {
+      e.cancelBubble = true;
+      if (!this.state.selectedNodeIds().has(node.id) || e.evt.shiftKey) {
+        this.state.selectNode(node.id, e.evt.shiftKey);
+      }
+      this.refreshSelection();
+    });
+
+    group.on('dblclick dbltap', () => this.nodeActivated.emit(node.id));
+
+    group.on('dragstart', () => {
+      this.state.commit();
+      this.dragOrigin.clear();
+      this.dragOrigin.set(node.id, group.position());
+      this.state.descendantIds(node.id).forEach((id) => {
+        const g = this.nodeGroup(id);
+        if (g) this.dragOrigin.set(id, g.position());
+      });
+    });
+
+    group.on('dragmove', () => {
+      const pos = { x: snap(group.x()), y: snap(group.y()) };
+      group.position(pos);
+      const origin = this.dragOrigin.get(node.id) as { x: number; y: number };
+      const dx = pos.x - origin.x;
+      const dy = pos.y - origin.y;
+      const moves = [...this.dragOrigin].map(([id, o]) => ({
+        id,
+        x: o.x + dx,
+        y: o.y + dy,
+      }));
+      moves.forEach((m) => {
+        if (m.id !== node.id) this.nodeGroup(m.id)?.position(m);
+      });
+      this.state.moveNodes(moves);
+      moves.forEach((m) => this.syncNodeVisuals(m.id));
+    });
+
+    group.on('dragend', () => {
+      const current = this.state.node(node.id);
+      if (!current) return;
+      const parentId = this.findContainerFor(current);
+      if (parentId !== current.parentId) {
+        this.state.updateNode(node.id, { parentId });
+      } else {
+        this.refreshSelection();
+      }
+    });
+
+    this.nodesLayer.add(group);
+  }
+
+  private renderPort(node: CanvasNode, port: Port): void {
+    const pos = this.portPosition(port, node);
+    const circle = new Konva.Circle({
+      x: pos.x,
+      y: pos.y,
+      radius: 5,
+      fill: '#3b82f6',
+      stroke: 'white',
+      strokeWidth: 2,
+      id: portId(node.id, port.id),
+      name: 'port',
+      hitStrokeWidth: 10,
+    });
+    circle.on('mouseenter', () => {
+      circle.radius(8);
+      this.stage?.container().style.setProperty('cursor', 'crosshair');
+    });
+    circle.on('mouseleave', () => {
+      circle.radius(5);
+      this.stage?.container().style.removeProperty('cursor');
+    });
+    circle.on('pointerdown', (e) => {
+      e.cancelBubble = true;
+      this.startEdgeDraw(node.id, port.id, circle);
+    });
+    this.portsLayer.add(circle);
+  }
+
+  private renderEdge(edge: CanvasEdge): void {
+    const points = this.edgePoints(edge);
+    if (!points) return;
+    const style = EDGE_STYLE[edge.kind];
+    const arrow = new Konva.Arrow({
+      id: edge.id,
+      name: 'edge',
+      points,
+      stroke: style.stroke,
+      fill: style.stroke,
+      strokeWidth: 2,
+      dash: style.dash,
+      pointerLength: style.arrow ? 10 : 0,
+      pointerWidth: style.arrow ? 8 : 0,
+      hitStrokeWidth: 12,
+    });
+    arrow.on('pointerdown', (e) => {
+      e.cancelBubble = true;
+      this.state.selectEdge(edge.id, e.evt.shiftKey);
+      this.refreshSelection();
+    });
+    this.edgesLayer.add(arrow);
   }
 
   private drawGrid(): void {
+    if (!this.stage) return;
     this.gridLayer.destroyChildren();
+    const zoom = this.state.zoom();
+    const topLeft = this.toCanvasPoint({ x: 0, y: 0 });
+    const bottomRight = this.toCanvasPoint({
+      x: this.stage.width(),
+      y: this.stage.height(),
+    });
+    const startX = Math.floor(topLeft.x / GRID_SIZE) * GRID_SIZE;
+    const startY = Math.floor(topLeft.y / GRID_SIZE) * GRID_SIZE;
+    const lineProps = { stroke: '#e5e7eb', strokeWidth: 1 / zoom };
 
-    const width = this.stage.width() * 3;
-    const height = this.stage.height() * 3;
-    const gridSize = this.GRID_SIZE * this.state.zoom();
-
-    for (let x = -width; x < width; x += gridSize) {
+    for (let x = startX; x < bottomRight.x; x += GRID_SIZE) {
       this.gridLayer.add(
         new Konva.Line({
-          points: [x, -height, x, height],
-          stroke: '#e5e7eb',
-          strokeWidth: 1 / this.state.zoom(),
+          points: [x, topLeft.y, x, bottomRight.y],
+          ...lineProps,
         }),
       );
     }
-
-    for (let y = -height; y < height; y += gridSize) {
+    for (let y = startY; y < bottomRight.y; y += GRID_SIZE) {
       this.gridLayer.add(
         new Konva.Line({
-          points: [-width, y, width, y],
-          stroke: '#e5e7eb',
-          strokeWidth: 1 / this.state.zoom(),
+          points: [topLeft.x, y, bottomRight.x, y],
+          ...lineProps,
         }),
       );
     }
-
-    this.gridLayer.batchDraw();
-  }
-
-  private setupStageEvents(): void {
-    this.stage.on('pointerdown', (e) => {
-      if (e.target === this.stage || e.target.getParent() === this.gridLayer) {
-        this.state.clearSelection();
-        this.updateAllNodeHighlights();
-        this.isPanning = e.evt.button === 1 || e.evt.shiftKey;
-        this.lastPointerPosition = this.stage.getPointerPosition() || {
-          x: 0,
-          y: 0,
-        };
-      }
-    });
-
-    this.stage.on('pointermove', () => {
-      if (this.isPanning) {
-        const pos = this.stage.getPointerPosition() || { x: 0, y: 0 };
-        const dx = pos.x - this.lastPointerPosition.x;
-        const dy = pos.y - this.lastPointerPosition.y;
-        this.state.setPan(this.state.panX() + dx, this.state.panY() + dy);
-        this.lastPointerPosition = pos;
-        this.updateTransform();
-      }
-    });
-
-    this.stage.on('pointerup', () => {
-      this.isPanning = false;
-    });
-
-    this.stage.on('wheel', (e) => {
-      e.evt.preventDefault();
-      const scaleBy = 1.1;
-      const oldScale = this.state.zoom();
-      const pointer = this.stage.getPointerPosition() || { x: 0, y: 0 };
-
-      const mousePointTo = {
-        x: (pointer.x - this.state.panX()) / oldScale,
-        y: (pointer.y - this.state.panY()) / oldScale,
-      };
-
-      const direction = e.evt.deltaY < 0 ? 1 : -1;
-      const newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
-      this.state.setZoom(newScale);
-
-      const newPos = {
-        x: pointer.x - mousePointTo.x * newScale,
-        y: pointer.y - mousePointTo.y * newScale,
-      };
-
-      this.state.setPan(newPos.x, newPos.y);
-      this.updateTransform();
-      this.drawGrid();
-    });
   }
 
   private updateTransform(): void {
     const x = this.state.panX();
     const y = this.state.panY();
     const scale = this.state.zoom();
-
-    [this.edgesLayer, this.nodesLayer, this.portsLayer, this.gridLayer].forEach(
-      (layer) => {
-        layer.x(x);
-        layer.y(y);
-        layer.scaleX(scale);
-        layer.scaleY(scale);
-      },
+    [
+      this.gridLayer,
+      this.edgesLayer,
+      this.nodesLayer,
+      this.portsLayer,
+      this.overlayLayer,
+    ].forEach((layer) =>
+      layer.setAttrs({ x, y, scaleX: scale, scaleY: scale }),
     );
   }
 
-  onDragOver(event: DragEvent): void {
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'copy';
-    }
-  }
+  /** Re-applies selection highlights and the resize transformer. */
+  private refreshSelection(): void {
+    const nodeIds = this.state.selectedNodeIds();
+    const edgeIds = this.state.selectedEdgeIds();
 
-  onDrop(event: DragEvent): void {
-    event.preventDefault();
-    const serviceType = event.dataTransfer?.getData('application/aws-service');
-    if (!serviceType) return;
-
-    const serviceDef = AWS_SERVICES.find((s) => s.type === serviceType);
-    if (!serviceDef) return;
-
-    const stageRect = this.stage.container().getBoundingClientRect();
-    const x =
-      (event.clientX - stageRect.left - this.state.panX()) / this.state.zoom();
-    const y =
-      (event.clientY - stageRect.top - this.state.panY()) / this.state.zoom();
-
-    const snappedX = Math.round(x / this.GRID_SIZE) * this.GRID_SIZE;
-    const snappedY = Math.round(y / this.GRID_SIZE) * this.GRID_SIZE;
-
-    const node: CanvasNode = {
-      id: this.state.createNodeId(),
-      type: serviceDef.type,
-      label: serviceDef.label,
-      x: snappedX,
-      y: snappedY,
-      width: serviceDef.defaultWidth,
-      height: serviceDef.defaultHeight,
-      ports: serviceDef.defaultPorts.map((p) => ({ ...p })),
-      properties: {},
-    };
-
-    this.state.addNode(node);
-    this.renderNode(node, serviceDef);
-  }
-
-  private renderNode(node: CanvasNode, serviceDef: AwsServiceDefinition): void {
-    const group = new Konva.Group({
-      x: node.x,
-      y: node.y,
-      draggable: true,
-      id: node.id,
+    this.nodesLayer.find<Konva.Group>('.node').forEach((group) => {
+      const selected = nodeIds.has(group.id());
+      group.findOne<Konva.Rect>('.body')?.setAttrs({
+        stroke: selected ? '#3b82f6' : '#d1d5db',
+        strokeWidth: selected ? 2 : 1,
+      });
     });
 
-    // Shadow
-    group.add(
-      new Konva.Rect({
-        width: node.width,
-        height: node.height,
-        fill: 'white',
-        stroke: '#d1d5db',
-        strokeWidth: 1,
-        shadowColor: 'black',
-        shadowBlur: 4,
-        shadowOffset: { x: 2, y: 2 },
-        shadowOpacity: 0.1,
-        cornerRadius: 4,
-      }),
-    );
-
-    // Header
-    group.add(
-      new Konva.Rect({
-        width: node.width,
-        height: 28,
-        fill: serviceDef.color,
-        cornerRadius: [4, 4, 0, 0],
-      }),
-    );
-
-    // Header text
-    group.add(
-      new Konva.Text({
-        text: serviceDef.label,
-        fontSize: 12,
-        fontFamily: 'Inter, system-ui, sans-serif',
-        fill: 'white',
-        padding: 6,
-        width: node.width,
-        align: 'center',
-      }),
-    );
-
-    // Body icon placeholder (service type text)
-    group.add(
-      new Konva.Text({
-        text: serviceDef.type.toUpperCase(),
-        fontSize: 10,
-        fontFamily: 'Inter, system-ui, sans-serif',
-        fill: '#6b7280',
-        y: 36,
-        width: node.width,
-        align: 'center',
-      }),
-    );
-
-    // Ports rendered on separate portsLayer (non-draggable)
-    node.ports.forEach((port) => {
-      const pos = this.getPortPosition(port, node);
-      const portCircle = new Konva.Circle({
-        x: node.x + pos.x,
-        y: node.y + pos.y,
-        radius: 5,
-        fill: '#3b82f6',
-        stroke: 'white',
-        strokeWidth: 2,
-        id: `${node.id}-port-${port.id}`,
-        name: 'port',
-        hitStrokeWidth: 10,
-      });
-
-      const portLabel = new Konva.Text({
-        text: port.id,
-        fontSize: 8,
-        fontFamily: 'Inter, system-ui, sans-serif',
-        fill: '#3b82f6',
-        x: node.x + pos.x,
-        y: node.y + pos.y,
-        offsetX: port.side === 'left' ? 14 : port.side === 'right' ? -14 : 0,
-        offsetY: port.side === 'top' ? 14 : port.side === 'bottom' ? -14 : 4,
-        visible: false,
-        id: `${node.id}-port-${port.id}-label`,
-      });
-
-      portCircle.on('mouseenter', () => {
-        portCircle.radius(10);
-        portCircle.fill('#2563eb');
-        portLabel.visible(true);
-        this.portsLayer.batchDraw();
-      });
-
-      portCircle.on('mouseleave', () => {
-        portCircle.radius(8);
-        portCircle.fill('#3b82f6');
-        portLabel.visible(false);
-        this.portsLayer.batchDraw();
-      });
-
-      portCircle.on('pointerdown', (e) => {
-        e.cancelBubble = true;
-        this.startEdgeDraw(node.id, e.target as Konva.Circle);
-      });
-
-      this.portsLayer.add(portCircle);
-      this.portsLayer.add(portLabel);
+    this.edgesLayer.find<Konva.Arrow>('.edge').forEach((arrow) => {
+      const edge = this.state.edges().find((e) => e.id === arrow.id());
+      const selected = edgeIds.has(arrow.id());
+      const stroke = selected
+        ? '#3b82f6'
+        : EDGE_STYLE[edge?.kind ?? 'depends-on'].stroke;
+      arrow.stroke(stroke);
+      arrow.fill(stroke);
+      arrow.strokeWidth(selected ? 3 : 2);
     });
 
-    group.on('pointerdown', (e) => {
-      e.cancelBubble = true;
-      this.state.selectNode(node.id, e.evt.shiftKey);
-      this.updateAllNodeHighlights();
-    });
-
-    group.on('dragmove', (e) => {
-      const pos = e.target.position();
-      const snappedX = Math.round(pos.x / this.GRID_SIZE) * this.GRID_SIZE;
-      const snappedY = Math.round(pos.y / this.GRID_SIZE) * this.GRID_SIZE;
-      e.target.position({ x: snappedX, y: snappedY });
-      this.state.updateNodePosition(node.id, snappedX, snappedY);
-      this.updateEdgesForNode(node.id);
-      this.updatePortPositions(node.id, snappedX, snappedY);
-    });
-
-    this.nodesLayer.add(group);
-    this.nodesLayer.batchDraw();
+    const single = nodeIds.size === 1 ? [...nodeIds][0] : null;
+    const group = single ? this.nodeGroup(single) : null;
+    this.transformer.nodes(group?.hasName('container') ? [group] : []);
   }
 
-  private getPortPosition(
-    port: Port,
-    node: CanvasNode,
-  ): { x: number; y: number } {
-    switch (port.side) {
-      case 'top':
-        return { x: node.width * port.offset, y: 0 };
-      case 'bottom':
-        return { x: node.width * port.offset, y: node.height };
-      case 'left':
-        return { x: 0, y: node.height * port.offset };
-      case 'right':
-        return { x: node.width, y: node.height * port.offset };
-    }
-  }
+  // --- Interaction ---------------------------------------------------------
 
-  private highlightNode(group: Konva.Group, selected: boolean): void {
-    const rect = group.findOne<Konva.Rect>('Rect');
-    if (rect) {
-      rect.stroke(selected ? '#3b82f6' : '#d1d5db');
-      rect.strokeWidth(selected ? 2 : 1);
-    }
-    this.nodesLayer.batchDraw();
-  }
+  private setupStageEvents(): void {
+    const stage = this.stage as Konva.Stage;
 
-  private updateAllNodeHighlights(): void {
-    const selectedIds = this.state.selectedNodeIds();
-    this.nodesLayer.getChildren().forEach((child) => {
-      if (child instanceof Konva.Group) {
-        this.highlightNode(child, selectedIds.has(child.id()));
+    stage.on('pointerdown', (e) => {
+      if (e.target !== stage) return;
+      this.state.clearSelection();
+      this.refreshSelection();
+      this.pointerStart = stage.getPointerPosition() ?? { x: 0, y: 0 };
+      this.pointerMode = e.evt.shiftKey ? 'select' : 'pan';
+      if (this.pointerMode === 'select') {
+        const p = this.toCanvasPoint(this.pointerStart);
+        this.selectionRect = new Konva.Rect({
+          x: p.x,
+          y: p.y,
+          fill: 'rgba(59, 130, 246, 0.1)',
+          stroke: '#3b82f6',
+          strokeWidth: 1 / this.state.zoom(),
+        });
+        this.overlayLayer.add(this.selectionRect);
+      } else {
+        stage.container().style.setProperty('cursor', 'grabbing');
       }
     });
-  }
 
-  private buildPortId(nodeId: string, portId: string): string {
-    return `#${nodeId}-port-${portId}`;
-  }
-
-  private buildPortLabelId(nodeId: string, portId: string): string {
-    return `#${nodeId}-port-${portId}-label`;
-  }
-
-  private findNodeForId(nodeId: string): CanvasNode | undefined {
-    return this.state.nodes().find((n) => n.id === nodeId);
-  }
-
-  /**
-   * Builds a list of ports associated with a node. Each entry is an object containing the circle and associated label.
-   * @param node The node to find ports for
-   * @returns List of ports on the canvas
-   */
-  private findCanvasPortsAndLabelsForNode(node: CanvasNode): {
-    port: Konva.Circle;
-    label: Konva.Text | undefined;
-    position: { x: number; y: number };
-  }[] {
-    const nodePorts: {
-      port: Konva.Circle;
-      label: Konva.Text | undefined;
-      position: { x: number; y: number };
-    }[] = [];
-
-    node.ports.forEach((port) => {
-      const circle = this.portsLayer.findOne<Konva.Circle>(
-        this.buildPortId(node.id, port.id),
-      );
-
-      const label = this.portsLayer.findOne<Konva.Text>(
-        this.buildPortLabelId(node.id, port.id),
-      );
-
-      if (circle) {
-        const pos = this.getPortPosition(port, node);
-        nodePorts.push({
-          port: circle,
-          label,
-          position: pos,
+    stage.on('pointermove', () => {
+      const pos = stage.getPointerPosition() ?? { x: 0, y: 0 };
+      if (this.pointerMode === 'pan') {
+        this.state.setPan(
+          this.state.panX() + pos.x - this.pointerStart.x,
+          this.state.panY() + pos.y - this.pointerStart.y,
+        );
+        this.pointerStart = pos;
+        this.updateTransform();
+      } else if (this.pointerMode === 'select' && this.selectionRect) {
+        const a = this.toCanvasPoint(this.pointerStart);
+        const b = this.toCanvasPoint(pos);
+        this.selectionRect.setAttrs({
+          x: Math.min(a.x, b.x),
+          y: Math.min(a.y, b.y),
+          width: Math.abs(b.x - a.x),
+          height: Math.abs(b.y - a.y),
         });
       }
     });
 
-    return nodePorts;
+    stage.on('pointerup', () => {
+      if (this.pointerMode === 'pan') {
+        this.drawGrid();
+        stage.container().style.removeProperty('cursor');
+      } else if (this.pointerMode === 'select' && this.selectionRect) {
+        const box = this.selectionRect.getSelfRect();
+        box.x = this.selectionRect.x();
+        box.y = this.selectionRect.y();
+        this.selectionRect.destroy();
+        this.selectionRect = null;
+        const hit = this.state
+          .nodes()
+          .filter((n) => Konva.Util.haveIntersection(box, this.nodeRect(n)))
+          .map((n) => n.id);
+        this.state.selectNodes(hit);
+        this.refreshSelection();
+      }
+      this.pointerMode = 'none';
+    });
+
+    stage.on('wheel', (e) => {
+      e.evt.preventDefault();
+      const oldScale = this.state.zoom();
+      const pointer = stage.getPointerPosition() ?? { x: 0, y: 0 };
+      const anchor = this.toCanvasPoint(pointer);
+      this.state.setZoom(e.evt.deltaY < 0 ? oldScale * 1.1 : oldScale / 1.1);
+      const scale = this.state.zoom();
+      this.state.setPan(
+        pointer.x - anchor.x * scale,
+        pointer.y - anchor.y * scale,
+      );
+      this.updateTransform();
+      this.drawGrid();
+    });
   }
 
-  private updatePortPositions(nodeId: string, x: number, y: number): void {
-    const node = this.findNodeForId(nodeId);
-    if (!node) return;
+  private setupTransformer(): void {
+    this.transformer.on('transformstart', () => this.state.commit());
+    this.transformer.on('transform', () => {
+      const group = this.transformer.nodes()[0] as Konva.Group | undefined;
+      if (group) this.applyGroupScale(group);
+    });
+    this.transformer.on('transformend', () => {
+      const group = this.transformer.nodes()[0] as Konva.Group | undefined;
+      if (!group) return;
+      const body = group.findOne<Konva.Rect>('.body') as Konva.Rect;
+      const x = snap(group.x());
+      const y = snap(group.y());
+      const width = Math.max(MIN_CONTAINER_SIZE, snap(body.width()));
+      const height = Math.max(MIN_CONTAINER_SIZE, snap(body.height()));
+      this.state.moveNodes([{ id: group.id(), x, y }]);
+      this.state.updateNode(group.id(), { width, height });
+    });
+  }
 
-    const ports = this.findCanvasPortsAndLabelsForNode(node);
+  /** Bakes transformer scale into the group's shapes so strokes stay crisp. */
+  private applyGroupScale(group: Konva.Group): void {
+    const body = group.findOne<Konva.Rect>('.body') as Konva.Rect;
+    const width = body.width() * group.scaleX();
+    const height = body.height() * group.scaleY();
+    group.scale({ x: 1, y: 1 });
+    body.size({ width, height });
+    group.findOne<Konva.Rect>('.header')?.width(width);
+    group.find<Konva.Text>('.label, .type').forEach((t) => t.width(width));
+    this.state.moveNodes([{ id: group.id(), x: group.x(), y: group.y() }]);
+    const node = this.state.node(group.id());
+    if (node) {
+      this.positionPorts({ ...node, width, height });
+      this.updateEdgesForNode(node.id);
+    }
+  }
 
-    ports.forEach((port) => {
-      port.port.x(x + port.position.x);
-      port.port.y(y + port.position.y);
-
-      if (port.label) {
-        port.label.x(x + port.position.x);
-        port.label.y(y + port.position.y);
+  private nudgeSelection(dx: number, dy: number): void {
+    const ids = [...this.state.selectedNodeIds()];
+    if (ids.length === 0) return;
+    this.state.commit();
+    const moved = new Set(ids.flatMap((id) => this.state.descendantIds(id)));
+    this.state.moveNodes(
+      [...moved].flatMap((id) => {
+        const n = this.state.node(id);
+        return n ? [{ id, x: n.x + dx, y: n.y + dy }] : [];
+      }),
+    );
+    moved.forEach((id) => {
+      const n = this.state.node(id);
+      if (n) {
+        this.nodeGroup(id)?.position({ x: n.x, y: n.y });
+        this.syncNodeVisuals(id);
       }
     });
-    this.portsLayer.batchDraw();
   }
 
-  private startEdgeDraw(nodeId: string, portCircle: Konva.Circle): void {
-    const portPos = portCircle.getAbsolutePosition();
-    const stagePos = this.stage.getPointerPosition() || { x: 0, y: 0 };
-
+  private startEdgeDraw(
+    sourceNodeId: string,
+    sourcePortId: string,
+    circle: Konva.Circle,
+  ): void {
+    const stage = this.stage as Konva.Stage;
+    const from = { x: circle.x(), y: circle.y() };
     this.tempLine = new Konva.Line({
-      points: [portPos.x, portPos.y, stagePos.x, stagePos.y],
+      points: [from.x, from.y, from.x, from.y],
       stroke: '#3b82f6',
-      strokeWidth: 2,
+      strokeWidth: 2 / this.state.zoom(),
       dash: [6, 3],
     });
+    this.overlayLayer.add(this.tempLine);
 
-    this.layer.add(this.tempLine);
-
-    const onPointerMove = () => {
-      const pos = this.stage.getPointerPosition() || { x: 0, y: 0 };
-      this.tempLine?.points([portPos.x, portPos.y, pos.x, pos.y]);
-      this.layer.batchDraw();
+    const onMove = () => {
+      const p = this.toCanvasPoint(stage.getPointerPosition() ?? from);
+      this.tempLine?.points([from.x, from.y, p.x, p.y]);
     };
 
-    const onPointerUp = (evt: Konva.KonvaEventObject<PointerEvent>) => {
-      const target = evt.target as Konva.Circle;
-      if (target.name() === 'port') {
-        // Port ID format: ${nodeId}-port-${portId}
-        const targetPortIdMatch = target.id().match(/^(.+)-port-(.+)$/);
-        if (targetPortIdMatch) {
-          const targetNodeId = targetPortIdMatch[1];
-          const targetPortId = targetPortIdMatch[2];
-          const sourcePortId = portCircle.id().split('-port-')[1];
-
-          if (targetNodeId !== nodeId && sourcePortId && targetPortId) {
-            const edge = {
-              id: this.state.createEdgeId(),
-              sourceNodeId: nodeId,
-              sourcePortId,
-              targetNodeId,
-              targetPortId,
-            };
-            this.state.addEdge(edge);
-            this.renderEdge(edge);
-          }
-        }
-      }
-
+    const onUp = (evt: Konva.KonvaEventObject<PointerEvent>) => {
+      stage.off('pointermove', onMove);
+      stage.off('pointerup', onUp);
       this.tempLine?.destroy();
       this.tempLine = null;
-      this.layer.batchDraw();
 
-      this.stage.off('pointermove', onPointerMove);
-      this.stage.off('pointerup', onPointerUp);
+      const target = evt.target;
+      if (!target.hasName('port')) return;
+      const [targetNodeId, targetPortId] = parsePortId(target.id());
+      if (targetNodeId === sourceNodeId) return;
+
+      const source = this.state.node(sourceNodeId);
+      const targetNode = this.state.node(targetNodeId);
+      if (!source || !targetNode) return;
+
+      const resolved = resolveEdge(source.type, targetNode.type);
+      if (!resolved) {
+        this.flashRejected(target as Konva.Circle);
+        return;
+      }
+      const edge: CanvasEdge = resolved.flipped
+        ? {
+            id: this.state.createEdgeId(),
+            kind: resolved.kind,
+            sourceNodeId: targetNodeId,
+            sourcePortId: targetPortId,
+            targetNodeId: sourceNodeId,
+            targetPortId: sourcePortId,
+          }
+        : {
+            id: this.state.createEdgeId(),
+            kind: resolved.kind,
+            sourceNodeId,
+            sourcePortId,
+            targetNodeId,
+            targetPortId,
+          };
+      this.state.addEdge(edge);
+      this.state.selectEdge(edge.id);
     };
 
-    this.stage.on('pointermove', onPointerMove);
-    this.stage.on('pointerup', onPointerUp);
+    stage.on('pointermove', onMove);
+    stage.on('pointerup', onUp);
   }
 
-  private renderEdge(edge: {
-    id: string;
-    sourceNodeId: string;
-    sourcePortId: string;
-    targetNodeId: string;
-    targetPortId: string;
-  }): void {
-    const sourceNode = this.state
-      .nodes()
-      .find((n) => n.id === edge.sourceNodeId);
-    const targetNode = this.state
-      .nodes()
-      .find((n) => n.id === edge.targetNodeId);
+  private flashRejected(circle: Konva.Circle): void {
+    circle.fill('#ef4444');
+    new Konva.Tween({ node: circle, duration: 0.6, fill: '#3b82f6' }).play();
+  }
 
-    if (!sourceNode || !targetNode) return;
+  // --- Geometry helpers ----------------------------------------------------
 
-    const sourcePort = sourceNode.ports.find((p) => p.id === edge.sourcePortId);
-    const targetPort = targetNode.ports.find((p) => p.id === edge.targetPortId);
+  private syncNodeVisuals(nodeId: string): void {
+    const node = this.state.node(nodeId);
+    if (!node) return;
+    this.positionPorts(node);
+    this.updateEdgesForNode(nodeId);
+  }
 
-    if (!sourcePort || !targetPort) return;
-
-    const sourcePos = this.getPortPosition(sourcePort, sourceNode);
-    const targetPos = this.getPortPosition(targetPort, targetNode);
-
-    const line = new Konva.Line({
-      points: [
-        sourceNode.x + sourcePos.x,
-        sourceNode.y + sourcePos.y,
-        targetNode.x + targetPos.x,
-        targetNode.y + targetPos.y,
-      ],
-      stroke: '#6b7280',
-      strokeWidth: 2,
-      id: edge.id,
-      hitStrokeWidth: 12,
+  private positionPorts(node: CanvasNode): void {
+    node.ports.forEach((port) => {
+      const pos = this.portPosition(port, node);
+      this.portsLayer
+        .findOne<Konva.Circle>(`#${portId(node.id, port.id)}`)
+        ?.position(pos);
     });
-
-    line.on('click', (e) => {
-      this.state.selectEdge(edge.id, e.evt.shiftKey);
-    });
-
-    this.edgesLayer.add(line);
-    this.edgesLayer.batchDraw();
   }
 
   private updateEdgesForNode(nodeId: string): void {
-    const edges = this.state
+    this.state
       .edges()
-      .filter((e) => e.sourceNodeId === nodeId || e.targetNodeId === nodeId);
-
-    edges.forEach((edge) => {
-      const line = this.edgesLayer.findOne<Konva.Line>(`#${edge.id}`);
-      if (line) {
-        const sourceNode = this.state
-          .nodes()
-          .find((n) => n.id === edge.sourceNodeId);
-        const targetNode = this.state
-          .nodes()
-          .find((n) => n.id === edge.targetNodeId);
-
-        if (!sourceNode || !targetNode) return;
-
-        const sourcePort = sourceNode.ports.find(
-          (p) => p.id === edge.sourcePortId,
-        );
-        const targetPort = targetNode.ports.find(
-          (p) => p.id === edge.targetPortId,
-        );
-
-        if (!sourcePort || !targetPort) return;
-
-        const sourcePos = this.getPortPosition(sourcePort, sourceNode);
-        const targetPos = this.getPortPosition(targetPort, targetNode);
-
-        line.points([
-          sourceNode.x + sourcePos.x,
-          sourceNode.y + sourcePos.y,
-          targetNode.x + targetPos.x,
-          targetNode.y + targetPos.y,
-        ]);
-      }
-    });
-
-    this.edgesLayer.batchDraw();
+      .filter((e) => e.sourceNodeId === nodeId || e.targetNodeId === nodeId)
+      .forEach((edge) => {
+        const points = this.edgePoints(edge);
+        if (points)
+          this.edgesLayer.findOne<Konva.Arrow>(`#${edge.id}`)?.points(points);
+      });
   }
 
-  getStage(): Konva.Stage {
-    return this.stage;
+  private edgePoints(edge: CanvasEdge): number[] | null {
+    const source = this.state.node(edge.sourceNodeId);
+    const target = this.state.node(edge.targetNodeId);
+    const sourcePort = source?.ports.find((p) => p.id === edge.sourcePortId);
+    const targetPort = target?.ports.find((p) => p.id === edge.targetPortId);
+    if (!source || !target || !sourcePort || !targetPort) return null;
+    const a = this.portPosition(sourcePort, source);
+    const b = this.portPosition(targetPort, target);
+    return [a.x, a.y, b.x, b.y];
   }
+
+  /** Absolute canvas position of a port. */
+  private portPosition(port: Port, node: CanvasNode): { x: number; y: number } {
+    switch (port.side) {
+      case 'top':
+        return { x: node.x + node.width * port.offset, y: node.y };
+      case 'bottom':
+        return {
+          x: node.x + node.width * port.offset,
+          y: node.y + node.height,
+        };
+      case 'left':
+        return { x: node.x, y: node.y + node.height * port.offset };
+      case 'right':
+        return {
+          x: node.x + node.width,
+          y: node.y + node.height * port.offset,
+        };
+    }
+  }
+
+  private nodeRect(n: CanvasNode) {
+    return { x: n.x, y: n.y, width: n.width, height: n.height };
+  }
+
+  /** Smallest container whose bounds hold the node's centre, excluding itself. */
+  private findContainerFor(node: CanvasNode): string | undefined {
+    const excluded = new Set(this.state.descendantIds(node.id));
+    const cx = node.x + node.width / 2;
+    const cy = node.y + node.height / 2;
+    return this.state
+      .nodes()
+      .filter(
+        (n) =>
+          !excluded.has(n.id) &&
+          AWS_SERVICE_MAP.get(n.type)?.container &&
+          cx >= n.x &&
+          cx <= n.x + n.width &&
+          cy >= n.y &&
+          cy <= n.y + n.height,
+      )
+      .sort((a, b) => a.width * a.height - b.width * b.height)[0]?.id;
+  }
+
+  private nodeGroup(id: string): Konva.Group | undefined {
+    return this.nodesLayer.findOne<Konva.Group>(`#${id}`);
+  }
+
+  private toCanvasPoint(p: { x: number; y: number }): { x: number; y: number } {
+    const zoom = this.state.zoom();
+    return {
+      x: (p.x - this.state.panX()) / zoom,
+      y: (p.y - this.state.panY()) / zoom,
+    };
+  }
+}
+
+function snap(value: number): number {
+  return Math.round(value / GRID_SIZE) * GRID_SIZE;
+}
+
+function portId(nodeId: string, port: string): string {
+  return `${nodeId}-port-${port}`;
+}
+
+function parsePortId(id: string): [string, string] {
+  const [nodeId, port] = id.split('-port-');
+  return [nodeId, port];
 }
