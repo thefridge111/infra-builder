@@ -54,7 +54,7 @@ export class CloudformationExportService {
   }
 
   exportToYaml(nodes: CanvasNode[], _edges: CanvasEdge[]): string {
-    const json = JSON.parse(this.exportToCloudFormation(nodes, edges));
+    const json = JSON.parse(this.exportToCloudFormation(nodes, _edges));
     return this.jsonToYaml(json);
   }
 

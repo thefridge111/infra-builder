@@ -28,6 +28,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
   private gridLayer!: Konva.Layer;
   private nodesLayer!: Konva.Layer;
   private edgesLayer!: Konva.Layer;
+  private portsLayer!: Konva.Layer;
   private tempLine: Konva.Line | null = null;
 
   private readonly GRID_SIZE = 20;
@@ -57,11 +58,13 @@ export class Canvas implements AfterViewInit, OnDestroy {
     this.gridLayer = new Konva.Layer({ listening: false });
     this.edgesLayer = new Konva.Layer();
     this.nodesLayer = new Konva.Layer();
+    this.portsLayer = new Konva.Layer();
     this.layer = new Konva.Layer();
 
     this.stage.add(this.gridLayer);
     this.stage.add(this.edgesLayer);
     this.stage.add(this.nodesLayer);
+    this.stage.add(this.portsLayer);
     this.stage.add(this.layer);
 
     this.drawGrid();
@@ -208,12 +211,14 @@ export class Canvas implements AfterViewInit, OnDestroy {
     const y = this.state.panY();
     const scale = this.state.zoom();
 
-    [this.edgesLayer, this.nodesLayer, this.gridLayer].forEach((layer) => {
-      layer.x(x);
-      layer.y(y);
-      layer.scaleX(scale);
-      layer.scaleY(scale);
-    });
+    [this.edgesLayer, this.nodesLayer, this.portsLayer, this.gridLayer].forEach(
+      (layer) => {
+        layer.x(x);
+        layer.y(y);
+        layer.scaleX(scale);
+        layer.scaleY(scale);
+      },
+    );
   }
 
   onDragOver(event: DragEvent): void {
@@ -316,39 +321,58 @@ export class Canvas implements AfterViewInit, OnDestroy {
       }),
     );
 
-    // Ports
+    // Ports rendered on separate portsLayer (non-draggable)
     node.ports.forEach((port) => {
       const pos = this.getPortPosition(port, node);
       const portCircle = new Konva.Circle({
-        x: pos.x,
-        y: pos.y,
+        x: node.x + pos.x,
+        y: node.y + pos.y,
         radius: 5,
         fill: '#3b82f6',
         stroke: 'white',
         strokeWidth: 2,
         id: `${node.id}-port-${port.id}`,
         name: 'port',
+        hitStrokeWidth: 10,
+      });
+
+      const portLabel = new Konva.Text({
+        text: port.id,
+        fontSize: 8,
+        fontFamily: 'Inter, system-ui, sans-serif',
+        fill: '#3b82f6',
+        x: node.x + pos.x,
+        y: node.y + pos.y,
+        offsetX: port.side === 'left' ? 14 : port.side === 'right' ? -14 : 0,
+        offsetY: port.side === 'top' ? 14 : port.side === 'bottom' ? -14 : 4,
+        visible: false,
+        id: `${node.id}-port-${port.id}-label`,
       });
 
       portCircle.on('mouseenter', () => {
-        portCircle.radius(7);
+        portCircle.radius(10);
         portCircle.fill('#2563eb');
+        portLabel.visible(true);
+        this.portsLayer.batchDraw();
       });
 
       portCircle.on('mouseleave', () => {
-        portCircle.radius(5);
+        portCircle.radius(8);
         portCircle.fill('#3b82f6');
+        portLabel.visible(false);
+        this.portsLayer.batchDraw();
       });
 
-      group.add(portCircle);
+      portCircle.on('pointerdown', (e) => {
+        e.cancelBubble = true;
+        this.startEdgeDraw(node.id, e.target as Konva.Circle);
+      });
+
+      this.portsLayer.add(portCircle);
+      this.portsLayer.add(portLabel);
     });
 
     group.on('pointerdown', (e) => {
-      if (e.target.name() === 'port') {
-        e.cancelBubble = true;
-        this.startEdgeDraw(node.id, e.target as Konva.Circle);
-        return;
-      }
       e.cancelBubble = true;
       this.state.selectNode(node.id, e.evt.shiftKey);
       this.updateAllNodeHighlights();
@@ -361,6 +385,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
       e.target.position({ x: snappedX, y: snappedY });
       this.state.updateNodePosition(node.id, snappedX, snappedY);
       this.updateEdgesForNode(node.id);
+      this.updatePortPositions(node.id, snappedX, snappedY);
     });
 
     this.nodesLayer.add(group);
@@ -399,6 +424,31 @@ export class Canvas implements AfterViewInit, OnDestroy {
         this.highlightNode(child, selectedIds.has(child.id()));
       }
     });
+  }
+
+  private updatePortPositions(nodeId: string, x: number, y: number): void {
+    const node = this.state.nodes().find((n) => n.id === nodeId);
+    if (!node) return;
+
+    node.ports.forEach((port) => {
+      const pos = this.getPortPosition(port, node);
+      const circle = this.portsLayer.findOne<Konva.Circle>(
+        `#${nodeId}-port-${port.id}`,
+      );
+      const label = this.portsLayer.findOne<Konva.Text>(
+        `#${nodeId}-port-${port.id}-label`,
+      );
+
+      if (circle) {
+        circle.x(x + pos.x);
+        circle.y(y + pos.y);
+      }
+      if (label) {
+        label.x(x + pos.x);
+        label.y(y + pos.y);
+      }
+    });
+    this.portsLayer.batchDraw();
   }
 
   private startEdgeDraw(nodeId: string, portCircle: Konva.Circle): void {

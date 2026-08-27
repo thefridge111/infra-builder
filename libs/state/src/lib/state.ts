@@ -1,5 +1,7 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, signal, computed, effect } from '@angular/core';
 import { CanvasNode, CanvasEdge, CanvasState } from './models';
+
+const STORAGE_KEY = 'infra-builder-canvas-state';
 
 @Injectable({ providedIn: 'root' })
 export class CanvasStateService {
@@ -10,6 +12,50 @@ export class CanvasStateService {
   readonly zoom = signal(1);
   readonly panX = signal(0);
   readonly panY = signal(0);
+
+  constructor() {
+    this.loadFromStorage();
+    // Auto-save on any state change
+    effect(() => this.saveToStorage());
+  }
+
+  private saveToStorage(): void {
+    const state = this.state();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.warn('Failed to save canvas state:', e);
+    }
+  }
+
+  private loadFromStorage(): void {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const state = JSON.parse(stored) as CanvasState;
+        this.nodes.set(state.nodes);
+        this.edges.set(state.edges);
+        this.selectedNodeIds.set(new Set(state.selectedNodeIds));
+        this.selectedEdgeIds.set(new Set(state.selectedEdgeIds));
+        this.zoom.set(state.zoom ?? 1);
+        this.panX.set(state.panX ?? 0);
+        this.panY.set(state.panY ?? 0);
+      }
+    } catch (e) {
+      console.warn('Failed to load canvas state:', e);
+    }
+  }
+
+  clearStorage(): void {
+    localStorage.removeItem(STORAGE_KEY);
+    this.nodes.set([]);
+    this.edges.set([]);
+    this.selectedNodeIds.set(new Set());
+    this.selectedEdgeIds.set(new Set());
+    this.zoom.set(1);
+    this.panX.set(0);
+    this.panY.set(0);
+  }
 
   readonly selectedNodes = computed(() => {
     const ids = this.selectedNodeIds();
