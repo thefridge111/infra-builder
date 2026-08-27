@@ -472,21 +472,25 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
     const onPointerUp = (evt: Konva.KonvaEventObject<PointerEvent>) => {
       const target = evt.target as Konva.Circle;
-      if (target.name() === 'port' && target.getParent()?.id() !== nodeId) {
-        const targetNodeId = target.getParent()?.id() || '';
-        const sourcePortId = portCircle.id().split('-port-')[1];
-        const targetPortId = target.id().split('-port-')[1];
+      if (target.name() === 'port') {
+        // Port ID format: ${nodeId}-port-${portId}
+        const targetPortIdMatch = target.id().match(/^(.+)-port-(.+)$/);
+        if (targetPortIdMatch) {
+          const targetNodeId = targetPortIdMatch[1];
+          const targetPortId = targetPortIdMatch[2];
+          const sourcePortId = portCircle.id().split('-port-')[1];
 
-        if (sourcePortId && targetPortId) {
-          const edge = {
-            id: this.state.createEdgeId(),
-            sourceNodeId: nodeId,
-            sourcePortId,
-            targetNodeId,
-            targetPortId,
-          };
-          this.state.addEdge(edge);
-          this.renderEdge(edge);
+          if (targetNodeId !== nodeId && sourcePortId && targetPortId) {
+            const edge = {
+              id: this.state.createEdgeId(),
+              sourceNodeId: nodeId,
+              sourcePortId,
+              targetNodeId,
+              targetPortId,
+            };
+            this.state.addEdge(edge);
+            this.renderEdge(edge);
+          }
         }
       }
 
