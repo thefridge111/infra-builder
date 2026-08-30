@@ -18,6 +18,19 @@ export class Sidebar {
   services = AWS_SERVICES;
   categories = AWS_CATEGORIES;
   searchText = '';
+  expandedCategories = new Set<string>(AWS_CATEGORIES);
+
+  toggleCategory(category: string): void {
+    if (this.expandedCategories.has(category)) {
+      this.expandedCategories.delete(category);
+    } else {
+      this.expandedCategories.add(category);
+    }
+  }
+
+  isExpanded(category: string): boolean {
+    return this.expandedCategories.has(category);
+  }
 
   filteredServices(category: string): AwsServiceDefinition[] {
     return this.services.filter(

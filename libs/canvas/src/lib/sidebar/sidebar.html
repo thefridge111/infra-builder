@@ -16,22 +16,42 @@
   <div class="services-list">
     @for (category of categories; track category) {
     <div class="category-group">
-      <h3 class="category-title">{{ category }}</h3>
-      @for (service of filteredServices(category); track service.type) {
       <button
         type="button"
-        class="service-item"
-        draggable="true"
-        (dragstart)="onDragStart($event, service)"
-        (click)="addRequested.emit(service)"
+        class="category-header"
+        (click)="toggleCategory(category)"
+        [attr.aria-expanded]="isExpanded(category)"
       >
-        <div class="service-icon" [style.background-color]="service.color">
-          <svg viewBox="0 0 24 24" class="icon">
-            <path [attr.d]="service.iconPath" fill="currentColor" />
-          </svg>
-        </div>
-        <span class="service-label">{{ service.label }}</span>
+        <span class="category-title">{{ category }}</span>
+        <svg
+          class="chevron"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
       </button>
+      @if (isExpanded(category)) {
+      <div class="category-services">
+        @for (service of filteredServices(category); track service.type) {
+        <button
+          type="button"
+          class="service-item"
+          draggable="true"
+          (dragstart)="onDragStart($event, service)"
+          (click)="addRequested.emit(service)"
+        >
+          <div class="service-icon" [style.background-color]="service.color">
+            <svg viewBox="0 0 24 24" class="icon">
+              <path [attr.d]="service.iconPath" fill="currentColor" />
+            </svg>
+          </div>
+          <span class="service-label">{{ service.label }}</span>
+        </button>
+        }
+      </div>
       }
     </div>
     }
