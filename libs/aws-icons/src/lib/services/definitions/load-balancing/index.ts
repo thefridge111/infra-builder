@@ -1,8 +1,10 @@
-import { AwsServiceDefinition } from '@infra-builder/state';
+import { AlbService } from '@infra-builder/state';
+import type { AwsServiceDefinition } from '../index';
 
 export const alb: AwsServiceDefinition = {
   type: 'alb',
   label: 'ALB',
+  classDef: new AlbService(),
   category: 'Load Balancing',
   color: '#8C4FFF',
   iconPath: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',

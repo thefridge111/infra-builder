@@ -1,8 +1,10 @@
-import { AwsServiceDefinition } from '@infra-builder/state';
+import { DynamodbService, RdsService } from '@infra-builder/state';
+import type { AwsServiceDefinition } from '../index';
 
 export const rds: AwsServiceDefinition = {
   type: 'rds',
   label: 'RDS',
+  classDef: new RdsService(),
   category: 'Database',
   color: '#C925D1',
   iconPath:
@@ -20,6 +22,7 @@ export const rds: AwsServiceDefinition = {
 export const dynamodb: AwsServiceDefinition = {
   type: 'dynamodb',
   label: 'DynamoDB',
+  classDef: new DynamodbService(),
   category: 'Database',
   color: '#C925D1',
   iconPath:

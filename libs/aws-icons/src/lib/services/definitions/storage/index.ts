@@ -1,8 +1,10 @@
-import { AwsServiceDefinition } from '@infra-builder/state';
+import { EbsService, S3Service } from '@infra-builder/state';
+import type { AwsServiceDefinition } from '../index';
 
 export const s3: AwsServiceDefinition = {
   type: 's3',
   label: 'S3',
+  classDef: new S3Service(),
   category: 'Storage',
   color: '#3F8624',
   iconPath:
@@ -20,6 +22,7 @@ export const s3: AwsServiceDefinition = {
 export const ebs: AwsServiceDefinition = {
   type: 'ebs',
   label: 'EBS',
+  classDef: new EbsService(),
   category: 'Storage',
   color: '#3F8624',
   iconPath: 'M4 4h16v16H4V4zm2 2v12h12V6H6zm3 3h6v6H9V9z',

@@ -1,3 +1,5 @@
+import { BaseAwsService } from '../services/classes';
+
 export type AwsServiceType =
   | 'vpc'
   | 'subnet'
@@ -29,7 +31,7 @@ export interface Port {
 
 export interface CanvasNode {
   id: string;
-  type: AwsServiceType;
+  type: BaseAwsService;
   label: string;
   x: number;
   y: number;
@@ -59,19 +61,6 @@ export interface CanvasState {
   zoom: number;
   panX: number;
   panY: number;
-}
-
-export interface AwsServiceDefinition {
-  type: AwsServiceType;
-  label: string;
-  category: string;
-  color: string;
-  iconPath: string;
-  defaultWidth: number;
-  defaultHeight: number;
-  defaultPorts: Port[];
-  /** Container nodes (VPC, Subnet) can be resized and own child nodes. */
-  container?: boolean;
 }
 
 export interface PropertyField {

@@ -1,4 +1,20 @@
-import { AwsServiceType, CanvasEdge, CanvasNode } from '@infra-builder/state';
+import {
+  AlbService,
+  AwsServiceType,
+  CanvasEdge,
+  CanvasNode,
+  DynamodbService,
+  EbsService,
+  Ec2Service,
+  IamRoleService,
+  InternetGatewayService,
+  LambdaService,
+  NatGatewayService,
+  SecurityGroupService,
+  SqsService,
+  SubnetService,
+  VpcService,
+} from '@infra-builder/state';
 
 type Props = Record<string, unknown>;
 
@@ -218,7 +234,7 @@ class Builder {
     this.byId = new Map(nodes.map((n) => [n.id, n]));
     const used = new Set<string>();
     nodes.forEach((n) => {
-      const base = toPascal(n.label) || toPascal(n.type) || 'Resource';
+      const base = toPascal(n.label) || toPascal(n.type.type) || 'Resource';
       let id = base;
       for (let i = 2; used.has(id); i++) id = `${base}${i}`;
       used.add(id);
@@ -239,13 +255,13 @@ class Builder {
     const userProps = Object.fromEntries(
       Object.entries(node.properties).map(([k, v]) => [k, coerce(v)]),
     );
-    const props: Props = { ...DEFAULT_PROPS[node.type], ...userProps };
+    const props: Props = { ...DEFAULT_PROPS[node.type.type], ...userProps };
     this.resources[this.id(node.id)] = {
-      Type: RESOURCE_TYPES[node.type],
+      Type: RESOURCE_TYPES[node.type.type],
       Properties: props,
     };
 
-    switch (node.type) {
+    switch (node.type.type) {
       case 'rds':
         this.parameters['DBUsername'] = { Type: 'String', Default: 'dbadmin' };
         this.parameters['DBPassword'] = { Type: 'String', NoEcho: true };
@@ -287,7 +303,7 @@ class Builder {
     const props = this.props(node.id);
     const vpcSubnets = this.subnetsIn(vpc).map((s) => ref(this.id(s.id)));
 
-    switch (node.type) {
+    switch (node.type.type) {
       case 'subnet':
       case 'security-group':
         if (vpc) props['VpcId'] = ref(this.id(vpc.id));
@@ -358,8 +374,13 @@ class Builder {
 
   /** Records the IAM statement a compute node needs for a data service. */
   private grantAccess(source: CanvasNode, target: CanvasNode, p: Props): void {
-    const access = ACCESS_ACTIONS[target.type];
-    if (!access || (source.type !== 'lambda' && source.type !== 'ec2')) return;
+    const access = ACCESS_ACTIONS[target.type.type];
+    if (
+      !access ||
+      (source.type instanceof LambdaService &&
+        source.type instanceof Ec2Service)
+    )
+      return;
     const mode = (p['Access'] as AccessMode | undefined) ?? 'read-write';
     const actions = [
       ...(mode !== 'write' ? access.read : []),
@@ -391,8 +412,8 @@ class Builder {
     const targetId = this.id(target.id);
     const targetArn = getAtt(targetId, 'Arn');
 
-    if (target.type === 'lambda') {
-      const principal = INVOKE_PRINCIPALS[source.type];
+    if (target.type instanceof LambdaService) {
+      const principal = INVOKE_PRINCIPALS[source.type.type];
       if (principal) {
         this.resources[`${targetId}${sourceId}Permission`] = {
           Type: 'AWS::Lambda::Permission',
@@ -404,10 +425,11 @@ class Builder {
           },
         };
       }
-      const stream = STREAM_SOURCES[source.type];
+      const stream = STREAM_SOURCES[source.type.type];
       if (stream) {
-        const arnAttr = source.type === 'dynamodb' ? 'StreamArn' : 'Arn';
-        if (source.type === 'dynamodb') {
+        const arnAttr =
+          source.type instanceof DynamodbService ? 'StreamArn' : 'Arn';
+        if (source.type instanceof DynamodbService) {
           this.props(source.id)['StreamSpecification'] = {
             StreamViewType: 'NEW_AND_OLD_IMAGES',
           };
@@ -426,7 +448,7 @@ class Builder {
       }
     }
 
-    switch (source.type) {
+    switch (source.type.type) {
       case 's3':
         this.applyS3Notification(source, target, p);
         break;
@@ -435,11 +457,11 @@ class Builder {
           Type: 'AWS::SNS::Subscription',
           Properties: {
             TopicArn: ref(sourceId),
-            Protocol: target.type === 'sqs' ? 'sqs' : 'lambda',
+            Protocol: target.type instanceof SqsService ? 'sqs' : 'lambda',
             Endpoint: targetArn,
           },
         };
-        if (target.type === 'sqs') {
+        if (target.type instanceof SqsService) {
           this.allowQueueSender(target, 'sns.amazonaws.com', ref(sourceId));
         }
         break;
@@ -459,7 +481,7 @@ class Builder {
           Type: 'AWS::Events::Rule',
           Properties: rule,
         };
-        if (target.type === 'sqs') {
+        if (target.type instanceof SqsService) {
           this.allowQueueSender(
             target,
             'events.amazonaws.com',
@@ -514,7 +536,7 @@ class Builder {
       };
     }
     const notification = this.notification(bucket.id);
-    switch (target.type) {
+    switch (target.type.type) {
       case 'lambda':
         push(notification, 'LambdaConfigurations', {
           ...config,
@@ -596,12 +618,12 @@ class Builder {
     const targetId = this.id(target.id);
     const targetProps = this.props(target.id);
 
-    if (source.type === 'iam-role') {
-      if (target.type === 'lambda') {
+    if (source.type instanceof IamRoleService) {
+      if (target.type instanceof LambdaService) {
         targetProps['Role'] = getAtt(sourceId, 'Arn');
         this.lambdaRoles.set(target.id, sourceId);
         this.policy(target.id, POLICY.basic);
-      } else if (target.type === 'ec2') {
+      } else if (target.type instanceof Ec2Service) {
         const profile = `${sourceId}InstanceProfile`;
         this.resources[profile] ??= {
           Type: 'AWS::IAM::InstanceProfile',
@@ -610,18 +632,21 @@ class Builder {
         targetProps['IamInstanceProfile'] = ref(profile);
         this.instanceRoles.set(target.id, sourceId);
       }
-    } else if (source.type === 'security-group') {
+    } else if (source.type instanceof SecurityGroupService) {
       const key: Partial<Record<AwsServiceType, string>> = {
         ec2: 'SecurityGroupIds',
         rds: 'VPCSecurityGroups',
         alb: 'SecurityGroups',
       };
-      if (target.type === 'lambda') {
+      if (target.type instanceof LambdaService) {
         this.vpcConfig(target.id, 'SecurityGroupIds', ref(sourceId));
-      } else if (key[target.type]) {
-        push(targetProps, key[target.type] as string, ref(sourceId));
+      } else if (key[target.type.type]) {
+        push(targetProps, key[target.type.type] as string, ref(sourceId));
       }
-    } else if (source.type === 'ebs' && target.type === 'ec2') {
+    } else if (
+      source.type instanceof EbsService &&
+      target.type instanceof Ec2Service
+    ) {
       const index = this.volumeCount.get(target.id) ?? 0;
       this.volumeCount.set(target.id, index + 1);
       this.props(source.id)['AvailabilityZone'] = getAtt(
@@ -643,7 +668,10 @@ class Builder {
     const sourceId = this.id(source.id);
     const targetId = this.id(target.id);
 
-    if (source.type === 'security-group' && target.type === 'security-group') {
+    if (
+      source.type instanceof SecurityGroupService &&
+      target.type instanceof SecurityGroupService
+    ) {
       this.resources[`${targetId}From${sourceId}Ingress`] = {
         Type: 'AWS::EC2::SecurityGroupIngress',
         Properties: {
@@ -652,21 +680,25 @@ class Builder {
           IpProtocol: '-1',
         },
       };
-    } else if (source.type === 'internet-gateway' && target.type === 'vpc') {
+    } else if (
+      source.type instanceof InternetGatewayService &&
+      target.type instanceof VpcService
+    ) {
       const attachment = `${targetId}${sourceId}Attachment`;
       this.resources[attachment] = {
         Type: 'AWS::EC2::VPCGatewayAttachment',
         Properties: { VpcId: ref(targetId), InternetGatewayId: ref(sourceId) },
       };
       this.gatewayAttachments.set(target.id, attachment);
-    } else if (source.type === 'alb') {
+    } else if (source.type instanceof AlbService) {
       const vpc = this.ancestor(source, 'vpc');
       const group = `${sourceId}TargetGroup`;
       this.resources[group] ??= {
         Type: 'AWS::ElasticLoadBalancingV2::TargetGroup',
         Properties: {
-          TargetType: target.type === 'lambda' ? 'lambda' : 'instance',
-          ...(target.type === 'lambda'
+          TargetType:
+            target.type instanceof LambdaService ? 'lambda' : 'instance',
+          ...(target.type instanceof LambdaService
             ? {}
             : {
                 Port: 80,
@@ -677,7 +709,7 @@ class Builder {
         },
       };
       const groupProps = this.resources[group].Properties as Props;
-      if (target.type === 'lambda') {
+      if (target.type instanceof LambdaService) {
         push(groupProps, 'Targets', { Id: getAtt(targetId, 'Arn') });
         const permission = `${targetId}${sourceId}Permission`;
         this.resources[permission] = {
@@ -708,9 +740,9 @@ class Builder {
 
   finish(): void {
     this.nodes.forEach((node) => {
-      if (node.type === 'lambda') this.finishLambda(node);
-      if (node.type === 'ec2') this.finishInstance(node);
-      if (node.type === 'nat-gateway') {
+      if (node.type instanceof LambdaService) this.finishLambda(node);
+      if (node.type instanceof Ec2Service) this.finishInstance(node);
+      if (node.type instanceof NatGatewayService) {
         const vpc = this.ancestor(node, 'vpc');
         const attachment = vpc && this.gatewayAttachments.get(vpc.id);
         if (attachment) this.dependsOn(node.id, attachment);
@@ -806,7 +838,7 @@ class Builder {
     type: AwsServiceType,
   ): CanvasNode | undefined {
     let current = node.parentId ? this.byId.get(node.parentId) : undefined;
-    while (current && current.type !== type) {
+    while (current && current.type.type !== type) {
       current = current.parentId ? this.byId.get(current.parentId) : undefined;
     }
     return current;
@@ -815,7 +847,7 @@ class Builder {
   private subnetsIn(vpc: CanvasNode | undefined): CanvasNode[] {
     if (!vpc) return [];
     return this.nodes.filter(
-      (n) => n.type === 'subnet' && this.ancestor(n, 'vpc') === vpc,
+      (n) => n.type instanceof SubnetService && this.ancestor(n, 'vpc') === vpc,
     );
   }
 

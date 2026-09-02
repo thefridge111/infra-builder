@@ -1,4 +1,15 @@
-import { CanvasEdge, CanvasNode } from '@infra-builder/state';
+import {
+  BaseAwsService,
+  CanvasEdge,
+  CanvasNode,
+  Ec2Service,
+  IamRoleService,
+  InternetGatewayService,
+  LambdaService,
+  SecurityGroupService,
+  SubnetService,
+  VpcService,
+} from '@infra-builder/state';
 
 export interface DiagramIssue {
   level: 'error' | 'warning';
@@ -13,41 +24,50 @@ export function validateDiagram(
 ): DiagramIssue[] {
   const issues: DiagramIssue[] = [];
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const ancestor = (node: CanvasNode, type: string): CanvasNode | undefined => {
+
+  const ancestor = (
+    node: CanvasNode,
+    type: typeof BaseAwsService,
+  ): CanvasNode | undefined => {
     let current = node.parentId ? byId.get(node.parentId) : undefined;
-    while (current && current.type !== type) {
+    while (current && current.type instanceof type) {
       current = current.parentId ? byId.get(current.parentId) : undefined;
     }
     return current;
   };
-  const incoming = (node: CanvasNode, type: string) =>
+  const incoming = (node: CanvasNode, type: typeof BaseAwsService) =>
     edges.some(
       (e) =>
-        e.targetNodeId === node.id && byId.get(e.sourceNodeId)?.type === type,
+        e.targetNodeId === node.id &&
+        byId.get(e.sourceNodeId)?.type instanceof type,
     );
-  const outgoing = (node: CanvasNode, type: string) =>
+  const outgoing = (node: CanvasNode, type: typeof BaseAwsService) =>
     edges.some(
       (e) =>
-        e.sourceNodeId === node.id && byId.get(e.targetNodeId)?.type === type,
+        e.sourceNodeId === node.id &&
+        byId.get(e.targetNodeId)?.type instanceof type,
     );
   const subnetsIn = (vpc: CanvasNode | undefined) =>
     vpc
-      ? nodes.filter((n) => n.type === 'subnet' && ancestor(n, 'vpc') === vpc)
+      ? nodes.filter(
+          (n) =>
+            n.type instanceof SubnetService && ancestor(n, VpcService) === vpc,
+        )
       : [];
   const gatewayAttached = (vpc: CanvasNode) =>
     edges.some(
       (e) =>
         e.targetNodeId === vpc.id &&
-        byId.get(e.sourceNodeId)?.type === 'internet-gateway',
+        byId.get(e.sourceNodeId)?.type instanceof InternetGatewayService,
     );
 
   nodes.forEach((node) => {
     const add = (level: DiagramIssue['level'], message: string) =>
       issues.push({ level, message, nodeId: node.id });
-    const vpc = ancestor(node, 'vpc');
-    const subnet = ancestor(node, 'subnet');
+    const vpc = ancestor(node, VpcService);
+    const subnet = ancestor(node, SubnetService);
 
-    switch (node.type) {
+    switch (node.type.type) {
       case 'subnet':
         if (!vpc) add('error', `${node.label} must be inside a VPC`);
         break;
@@ -66,28 +86,28 @@ export function validateDiagram(
         if (!subnet) add('warning', `${node.label} has no subnet group`);
         else if (subnetsIn(vpc).length < 2)
           add('error', `${node.label} needs two subnets in its VPC`);
-        if (!incoming(node, 'security-group'))
+        if (!incoming(node, SecurityGroupService))
           add('warning', `${node.label} has no security group`);
         break;
       case 'alb':
         if (!subnet) add('error', `${node.label} must be inside a subnet`);
         else if (subnetsIn(vpc).length < 2)
           add('error', `${node.label} needs two subnets in its VPC`);
-        if (!outgoing(node, 'ec2') && !outgoing(node, 'lambda'))
+        if (!outgoing(node, Ec2Service) && !outgoing(node, LambdaService))
           add('warning', `${node.label} has no targets`);
         break;
       case 'internet-gateway':
-        if (!outgoing(node, 'vpc'))
+        if (!outgoing(node, VpcService))
           add('warning', `${node.label} is not attached to a VPC`);
         break;
       case 'lambda':
-        if (!incoming(node, 'iam-role'))
+        if (!incoming(node, IamRoleService))
           add('warning', `${node.label} will use a generated execution role`);
-        if (subnet && !incoming(node, 'security-group'))
+        if (subnet && !incoming(node, SecurityGroupService))
           add('warning', `${node.label} will get a generated security group`);
         break;
       case 'api-gateway':
-        if (!outgoing(node, 'lambda'))
+        if (!outgoing(node, LambdaService))
           add('warning', `${node.label} has no routes`);
         break;
     }
@@ -106,9 +126,9 @@ export function validateDiagram(
 
   const cidrs = new Map<string, CanvasNode[]>();
   nodes
-    .filter((n) => n.type === 'subnet' && n.properties['CidrBlock'])
+    .filter((n) => n.type instanceof SubnetService && n.properties['CidrBlock'])
     .forEach((n) => {
-      const key = `${ancestor(n, 'vpc')?.id}:${n.properties['CidrBlock']}`;
+      const key = `${ancestor(n, VpcService)?.id}:${n.properties['CidrBlock']}`;
       cidrs.set(key, [...(cidrs.get(key) ?? []), n]);
     });
   cidrs.forEach((group) => {

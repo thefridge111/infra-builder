@@ -1,8 +1,10 @@
-import { AwsServiceDefinition } from '@infra-builder/state';
+import { Ec2Service, EcsService, LambdaService } from '@infra-builder/state';
+import type { AwsServiceDefinition } from '../index';
 
 export const ec2: AwsServiceDefinition = {
   type: 'ec2',
   label: 'EC2',
+  classDef: new Ec2Service(),
   category: 'Compute',
   color: '#FF9900',
   iconPath: 'M4 4h16v12H4V4zm2 2v8h12V6H6zm2 10h8v2H8v-2z',
@@ -19,6 +21,7 @@ export const ec2: AwsServiceDefinition = {
 export const lambda: AwsServiceDefinition = {
   type: 'lambda',
   label: 'Lambda',
+  classDef: new LambdaService(),
   category: 'Compute',
   color: '#FF9900',
   iconPath: 'M13 2L3 14h6l-1 8 10-12h-6l1-8z',
@@ -35,6 +38,7 @@ export const lambda: AwsServiceDefinition = {
 export const ecs: AwsServiceDefinition = {
   type: 'ecs',
   label: 'ECS',
+  classDef: new EcsService(),
   category: 'Compute',
   color: '#FF9900',
   iconPath:

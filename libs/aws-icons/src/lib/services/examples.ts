@@ -5,7 +5,6 @@ import {
   CanvasState,
 } from '@infra-builder/state';
 import { AWS_SERVICE_MAP } from './definitions';
-import { resolveEdge } from './edge-rules';
 
 export interface ExampleProject {
   name: string;
@@ -34,7 +33,7 @@ function diagram(
     if (!def) throw new Error(`Unknown service ${spec.type}`);
     built[key] = {
       id: `ex-${key}`,
-      type: spec.type,
+      type: def.classDef,
       label: spec.label,
       x: spec.x,
       y: spec.y,
@@ -46,22 +45,45 @@ function diagram(
     };
   });
 
+  /** TODO: This needs work. We're not building the examples properly... Validating the edges on these custom
+   * edge types is causing the breakages...
+   */
   const edges: CanvasEdge[] = links.map(([from, to, properties], i) => {
     const source = built[from];
     const target = built[to];
-    const resolved = resolveEdge(source.type, target.type);
-    if (!resolved) throw new Error(`No rule for ${from} → ${to}`);
-    const [a, b] = resolved.flipped ? [target, source] : [source, target];
-    const ports = pickPorts(a, b);
-    return {
-      id: `ex-edge-${i}`,
-      kind: resolved.kind,
-      sourceNodeId: a.id,
-      sourcePortId: ports[0],
-      targetNodeId: b.id,
-      targetPortId: ports[1],
-      properties,
-    };
+
+    if (!source || !target) {
+      throw new Error(
+        `Source or target not defined! s -> ${source}, t -> ${target}`,
+      );
+    }
+
+    const outgoing = source.type.validateEdge(target.type, 'outgoing');
+    const incoming = source.type.validateEdge(target.type, 'incoming');
+
+    if (outgoing.allowed) {
+      const ports = pickPorts(source, target);
+      return {
+        id: `ex-edge-${i}`,
+        kind: outgoing.kind ?? 'depends-on',
+        sourceNodeId: source.id,
+        sourcePortId: ports[0],
+        targetNodeId: target.id,
+        targetPortId: ports[1],
+      };
+    } else if (incoming.allowed) {
+      const ports = pickPorts(target, source);
+      return {
+        id: `ex-edge-${i}`,
+        kind: incoming.kind ?? 'depends-on',
+        sourceNodeId: target.id,
+        sourcePortId: ports[0],
+        targetNodeId: source.id,
+        targetPortId: ports[1],
+      };
+    } else {
+      throw new Error(`No rule for ${from} → ${to}`);
+    }
   });
 
   return {

@@ -1,4 +1,3 @@
-import { AwsServiceDefinition } from '@infra-builder/state';
 import { networkingServices } from './networking';
 import { computeServices } from './compute';
 import { storageServices } from './storage';
@@ -6,6 +5,26 @@ import { databaseServices } from './database';
 import { securityServices } from './security';
 import { loadBalancingServices } from './load-balancing';
 import { integrationServices } from './integration';
+import type {
+  AwsServiceType,
+  BaseAwsService,
+  Port,
+} from '@infra-builder/state';
+
+export interface AwsServiceDefinition {
+  type: AwsServiceType;
+  label: string;
+  classDef: BaseAwsService;
+  category: string;
+  color: string;
+  iconPath: string;
+  defaultWidth: number;
+  defaultHeight: number;
+  defaultPorts: Port[];
+  container?: boolean;
+}
+
+export type { AwsServiceType, Port } from '@infra-builder/state';
 
 export const AWS_SERVICES: AwsServiceDefinition[] = [
   ...networkingServices,

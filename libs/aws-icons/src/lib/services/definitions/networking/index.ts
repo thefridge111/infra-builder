@@ -1,8 +1,15 @@
-import { AwsServiceDefinition } from '@infra-builder/state';
+import {
+  InternetGatewayService,
+  NatGatewayService,
+  SubnetService,
+  VpcService,
+} from '@infra-builder/state';
+import type { AwsServiceDefinition } from '../index';
 
 export const vpc: AwsServiceDefinition = {
   type: 'vpc',
   label: 'VPC',
+  classDef: new VpcService(),
   category: 'Networking',
   color: '#8C4FFF',
   iconPath: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
@@ -19,6 +26,7 @@ export const vpc: AwsServiceDefinition = {
 export const subnet: AwsServiceDefinition = {
   type: 'subnet',
   label: 'Subnet',
+  classDef: new SubnetService(),
   category: 'Networking',
   color: '#8C4FFF',
   iconPath: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
@@ -35,6 +43,7 @@ export const subnet: AwsServiceDefinition = {
 export const internetGateway: AwsServiceDefinition = {
   type: 'internet-gateway',
   label: 'Internet Gateway',
+  classDef: new InternetGatewayService(),
   category: 'Networking',
   color: '#8C4FFF',
   iconPath: 'M12 2a10 10 0 100 20 10 10 0 000-20zm0 4a2 2 0 110 4 2 2 0 010-4z',
@@ -49,6 +58,7 @@ export const internetGateway: AwsServiceDefinition = {
 export const natGateway: AwsServiceDefinition = {
   type: 'nat-gateway',
   label: 'NAT Gateway',
+  classDef: new NatGatewayService(),
   category: 'Networking',
   color: '#8C4FFF',
   iconPath:

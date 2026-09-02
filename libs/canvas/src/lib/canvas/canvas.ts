@@ -14,7 +14,6 @@ import {
 import Konva from 'konva';
 import {
   CanvasStateService,
-  AwsServiceDefinition,
   AwsServiceType,
   CanvasNode,
   CanvasEdge,
@@ -27,8 +26,8 @@ import {
   AWS_SERVICE_MAP,
   DEFAULT_ACCESS,
   EDGE_KIND_LABELS,
-  resolveEdge,
   validateDiagram,
+  type AwsServiceDefinition,
 } from '@infra-builder/aws-icons';
 import { routeEdge } from './routing';
 
@@ -333,7 +332,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
   private createNode(def: AwsServiceDefinition, x: number, y: number): void {
     const node: CanvasNode = {
       id: this.state.createNodeId(),
-      type: def.type,
+      type: def.classDef,
       label: def.label,
       x: snap(x),
       y: snap(y),
@@ -373,11 +372,11 @@ export class Canvas implements AfterViewInit, OnDestroy {
       return parent ? 1 + depth(parent) : 0;
     };
     const order = (n: CanvasNode): number =>
-      (AWS_SERVICE_MAP.get(n.type)?.container ? 0 : 1000) + depth(n);
+      (AWS_SERVICE_MAP.get(n.type.type)?.container ? 0 : 1000) + depth(n);
     [...nodes]
       .sort((a, b) => order(a) - order(b))
       .forEach((node) => {
-        const def = AWS_SERVICE_MAP.get(node.type);
+        const def = AWS_SERVICE_MAP.get(node.type.type);
         if (def) this.renderNode(node, def, issues.get(node.id));
       });
     edges.forEach((edge) => this.renderEdge(edge));
@@ -646,7 +645,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
   private defaultEdgeLabel(edge: CanvasEdge): string {
     if (edge.kind !== 'depends-on') return EDGE_KIND_LABELS[edge.kind];
     const target = this.state.node(edge.targetNodeId);
-    if (!target || !ACCESS_TARGETS.has(target.type)) return '';
+    if (!target || !ACCESS_TARGETS.has(target.type.type)) return '';
     return (edge.properties?.['Access'] ?? DEFAULT_ACCESS).replace('-', '/');
   }
 
@@ -963,28 +962,33 @@ export class Canvas implements AfterViewInit, OnDestroy {
       const targetNode = this.state.node(targetNodeId);
       if (!source || !targetNode) return;
 
-      const resolved = resolveEdge(source.type, targetNode.type);
-      if (!resolved) {
+      const outgoing = source.type.validateEdge(targetNode.type, 'outgoing');
+      const incoming = source.type.validateEdge(targetNode.type, 'incoming');
+
+      let edge;
+      if (outgoing.allowed) {
+        edge = {
+          id: this.state.createEdgeId(),
+          kind: outgoing.kind ?? 'depends-on',
+          sourceNodeId,
+          sourcePortId,
+          targetNodeId,
+          targetPortId,
+        };
+      } else if (incoming.allowed) {
+        edge = {
+          id: this.state.createEdgeId(),
+          kind: incoming.kind ?? 'depends-on',
+          sourceNodeId: targetNodeId,
+          sourcePortId: targetPortId,
+          targetNodeId: sourceNodeId,
+          targetPortId: sourcePortId,
+        };
+      } else {
         this.flashRejected(target as Konva.Circle);
         return;
       }
-      const edge: CanvasEdge = resolved.flipped
-        ? {
-            id: this.state.createEdgeId(),
-            kind: resolved.kind,
-            sourceNodeId: targetNodeId,
-            sourcePortId: targetPortId,
-            targetNodeId: sourceNodeId,
-            targetPortId: sourcePortId,
-          }
-        : {
-            id: this.state.createEdgeId(),
-            kind: resolved.kind,
-            sourceNodeId,
-            sourcePortId,
-            targetNodeId,
-            targetPortId,
-          };
+
       this.state.addEdge(edge);
       this.state.selectEdge(edge.id);
     };
@@ -1088,7 +1092,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
       .filter(
         (n) =>
           !excluded.has(n.id) &&
-          AWS_SERVICE_MAP.get(n.type)?.container &&
+          AWS_SERVICE_MAP.get(n.type.type)?.container &&
           cx >= n.x &&
           cx <= n.x + n.width &&
           cy >= n.y &&

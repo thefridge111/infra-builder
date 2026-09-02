@@ -7,15 +7,17 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { CanvasStateService, PropertyField } from '@infra-builder/state';
+import {
+  CanvasEdge,
+  CanvasStateService,
+  PropertyField,
+} from '@infra-builder/state';
 import {
   AWS_SERVICE_MAP,
   EDGE_KIND_LABELS,
-  NODE_PROPERTY_FIELDS,
   TRIGGER_PROPERTY_FIELDS,
   ACCESS_PROPERTY_FIELDS,
   ACCESS_TARGETS,
-  matchRule,
   validateDiagram,
 } from '@infra-builder/aws-icons';
 
@@ -53,7 +55,7 @@ export class Properties {
   });
 
   readonly nodeFields = computed<PropertyField[]>(
-    () => NODE_PROPERTY_FIELDS[this.node()?.type ?? 'vpc'] ?? [],
+    () => this.node()?.type?.propertyFields ?? [],
   );
 
   readonly edgeFields = computed<PropertyField[]>(() => {
@@ -62,12 +64,12 @@ export class Properties {
     const source = this.state.node(edge.sourceNodeId);
     const target = this.state.node(edge.targetNodeId);
     if (edge.kind === 'trigger') {
-      return (source && TRIGGER_PROPERTY_FIELDS[source.type]) ?? [];
+      return (source && TRIGGER_PROPERTY_FIELDS[source.type.type]) ?? [];
     }
     if (
       edge.kind === 'depends-on' &&
       target &&
-      ACCESS_TARGETS.has(target.type)
+      ACCESS_TARGETS.has(target.type.type)
     ) {
       return ACCESS_PROPERTY_FIELDS;
     }
@@ -87,7 +89,7 @@ export class Properties {
   );
 
   readonly typeLabel = computed(
-    () => AWS_SERVICE_MAP.get(this.node()?.type ?? 'vpc')?.label ?? '',
+    () => AWS_SERVICE_MAP.get(this.node()?.type.type ?? 'vpc')?.label ?? '',
   );
 
   readonly kindLabel = computed(() => {
@@ -95,22 +97,47 @@ export class Properties {
     return edge ? EDGE_KIND_LABELS[edge.kind] : '';
   });
 
+  resolveEdge(canvasEdge: CanvasEdge): string | null {
+    const source = canvasEdge && this.state.node(canvasEdge.sourceNodeId);
+    const target = canvasEdge && this.state.node(canvasEdge.targetNodeId);
+
+    if (!source || !target) {
+      return null;
+    }
+
+    const outgoing = source.type.validateEdge(target.type, 'outgoing');
+    const incoming = source.type.validateEdge(target.type, 'incoming');
+
+    if (outgoing.allowed && outgoing.kind) {
+      return EDGE_KIND_LABELS[outgoing.kind];
+    } else if (incoming.allowed && incoming.kind) {
+      return EDGE_KIND_LABELS[incoming.kind];
+    }
+    return null;
+  }
+
   /** The kind this edge would have if drawn the other way, when that's allowed. */
   readonly reversedKind = computed(() => {
     const edge = this.edge();
-    const source = edge && this.state.node(edge.sourceNodeId);
-    const target = edge && this.state.node(edge.targetNodeId);
-    if (!source || !target) return null;
-    const rule = matchRule(target.type, source.type);
-    return rule ? EDGE_KIND_LABELS[rule.kind] : null;
+
+    if (!edge) {
+      return null;
+    }
+
+    return this.resolveEdge(edge);
   });
 
   reverseEdge(id: string): void {
     const edge = this.state.edges().find((e) => e.id === id);
     const source = edge && this.state.node(edge.sourceNodeId);
     const target = edge && this.state.node(edge.targetNodeId);
-    const rule = source && target && matchRule(target.type, source.type);
-    if (!edge || !rule) return;
+    const rule =
+      source && target && source.type.validateEdge(target.type, 'outgoing');
+
+    if (!edge || !rule) {
+      return;
+    }
+
     this.state.updateEdge(id, {
       kind: rule.kind,
       sourceNodeId: edge.targetNodeId,

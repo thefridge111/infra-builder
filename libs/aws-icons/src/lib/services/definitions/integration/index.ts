@@ -1,11 +1,20 @@
-import { AwsServiceDefinition } from '@infra-builder/state';
+import {
+  ApiGatewayService,
+  EventBridgeService,
+  KinesisService,
+  SnsService,
+  SqsService,
+} from '@infra-builder/state';
+import type { AwsServiceDefinition } from '../index';
 
 export const sqs: AwsServiceDefinition = {
   type: 'sqs',
   label: 'SQS',
+  classDef: new SqsService(),
   category: 'Integration',
-  color: '#E7157B',
-  iconPath: 'M3 6h18v4H3V6zm0 6h18v4H3v-4zm0 6h12v2H3v-2z',
+  color: '#FF4F8B',
+  iconPath:
+    'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
   defaultWidth: 120,
   defaultHeight: 90,
   defaultPorts: [
@@ -19,9 +28,11 @@ export const sqs: AwsServiceDefinition = {
 export const sns: AwsServiceDefinition = {
   type: 'sns',
   label: 'SNS',
+  classDef: new SnsService(),
   category: 'Integration',
-  color: '#E7157B',
-  iconPath: 'M12 3l9 6-9 6-9-6 9-6zm0 15l9-6v3l-9 6-9-6v-3l9 6z',
+  color: '#FF4F8B',
+  iconPath:
+    'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
   defaultWidth: 120,
   defaultHeight: 90,
   defaultPorts: [
@@ -35,9 +46,11 @@ export const sns: AwsServiceDefinition = {
 export const eventbridge: AwsServiceDefinition = {
   type: 'eventbridge',
   label: 'EventBridge',
+  classDef: new EventBridgeService(),
   category: 'Integration',
-  color: '#E7157B',
-  iconPath: 'M4 12l4-4v3h8V8l4 4-4 4v-3H8v3l-4-4z',
+  color: '#FF4F8B',
+  iconPath:
+    'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
   defaultWidth: 120,
   defaultHeight: 90,
   defaultPorts: [
@@ -51,26 +64,28 @@ export const eventbridge: AwsServiceDefinition = {
 export const apiGateway: AwsServiceDefinition = {
   type: 'api-gateway',
   label: 'API Gateway',
+  classDef: new ApiGatewayService(),
   category: 'Integration',
-  color: '#E7157B',
-  iconPath: 'M4 4h16v4H4V4zm0 6h7v10H4V10zm9 0h7v10h-7V10z',
-  defaultWidth: 120,
-  defaultHeight: 90,
+  color: '#FF4F8B',
+  iconPath:
+    'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
+  defaultWidth: 140,
+  defaultHeight: 80,
   defaultPorts: [
-    { id: 'top', side: 'top', offset: 0.5 },
-    { id: 'right', side: 'right', offset: 0.5 },
-    { id: 'bottom', side: 'bottom', offset: 0.5 },
     { id: 'left', side: 'left', offset: 0.5 },
+    { id: 'right-top', side: 'right', offset: 0.3 },
+    { id: 'right-bottom', side: 'right', offset: 0.7 },
   ],
 };
 
 export const kinesis: AwsServiceDefinition = {
   type: 'kinesis',
   label: 'Kinesis',
+  classDef: new KinesisService(),
   category: 'Integration',
-  color: '#8C4FFF',
+  color: '#FF4F8B',
   iconPath:
-    'M3 8c3 0 3 4 6 4s3-4 6-4 3 4 6 4v2c-3 0-3-4-6-4s-3 4-6 4-3-4-6-4V8z',
+    'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
   defaultWidth: 120,
   defaultHeight: 90,
   defaultPorts: [

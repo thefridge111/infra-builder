@@ -1,8 +1,10 @@
-import { AwsServiceDefinition } from '@infra-builder/state';
+import { IamRoleService, SecurityGroupService } from '@infra-builder/state';
+import type { AwsServiceDefinition } from '../index';
 
 export const iamRole: AwsServiceDefinition = {
   type: 'iam-role',
   label: 'IAM Role',
+  classDef: new IamRoleService(),
   category: 'Security',
   color: '#DD344C',
   iconPath:
@@ -20,6 +22,7 @@ export const iamRole: AwsServiceDefinition = {
 export const securityGroup: AwsServiceDefinition = {
   type: 'security-group',
   label: 'Security Group',
+  classDef: new SecurityGroupService(),
   category: 'Security',
   color: '#DD344C',
   iconPath:

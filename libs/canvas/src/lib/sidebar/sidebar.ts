@@ -1,8 +1,11 @@
 import { Component, inject, output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { AWS_SERVICES, AWS_CATEGORIES } from '@infra-builder/aws-icons';
+import {
+  AWS_SERVICES,
+  AWS_CATEGORIES,
+  type AwsServiceDefinition,
+} from '@infra-builder/aws-icons';
 import { CanvasStateService } from '@infra-builder/state';
-import { AwsServiceDefinition } from '@infra-builder/state';
 
 @Component({
   selector: 'lib-sidebar',

@@ -1,4 +1,11 @@
-import { CanvasNode } from '@infra-builder/state';
+import {
+  AlbService,
+  CanvasNode,
+  Ec2Service,
+  S3Service,
+  SubnetService,
+  VpcService,
+} from '@infra-builder/state';
 import { validateDiagram } from './validation';
 
 function node(
@@ -23,7 +30,7 @@ function node(
 describe('validateDiagram', () => {
   it('flags resources outside their required container', () => {
     const issues = validateDiagram(
-      [node('subnet', 'subnet'), node('ec2', 'ec2')],
+      [node('subnet', new SubnetService()), node('ec2', new Ec2Service())],
       [],
     );
     expect(issues.map((i) => [i.level, i.nodeId])).toEqual([
@@ -35,9 +42,9 @@ describe('validateDiagram', () => {
   it('accepts a well-formed network', () => {
     const issues = validateDiagram(
       [
-        node('vpc', 'vpc'),
-        node('subnet', 'subnet', 'vpc'),
-        node('ec2', 'ec2', 'subnet'),
+        node('vpc', new VpcService()),
+        node('subnet', new SubnetService(), 'vpc'),
+        node('ec2', new Ec2Service(), 'subnet'),
       ],
       [],
     );
@@ -46,7 +53,11 @@ describe('validateDiagram', () => {
 
   it('warns about duplicate labels and sorts errors first', () => {
     const issues = validateDiagram(
-      [node('a', 's3'), { ...node('b', 's3'), label: 'a' }, node('ec2', 'ec2')],
+      [
+        node('a', new S3Service()),
+        { ...node('b', new S3Service()), label: 'a' },
+        node('ec2', new Ec2Service()),
+      ],
       [],
     );
     expect(issues[0].level).toBe('error');
@@ -57,7 +68,11 @@ describe('validateDiagram', () => {
 describe('validateDiagram deployability', () => {
   it('requires two subnets for load balancers and databases', () => {
     const one = validateDiagram(
-      [node('vpc', 'vpc'), node('s', 'subnet', 'vpc'), node('alb', 'alb', 's')],
+      [
+        node('vpc', new VpcService()),
+        node('s', new SubnetService(), 'vpc'),
+        node('alb', new AlbService(), 's'),
+      ],
       [],
     );
     expect(one.find((i) => i.nodeId === 'alb')?.message).toContain(
@@ -65,10 +80,10 @@ describe('validateDiagram deployability', () => {
     );
     const two = validateDiagram(
       [
-        node('vpc', 'vpc'),
-        node('s', 'subnet', 'vpc'),
-        node('t', 'subnet', 'vpc'),
-        node('alb', 'alb', 's'),
+        node('vpc', new VpcService()),
+        node('s', new SubnetService(), 'vpc'),
+        node('t', new SubnetService(), 'vpc'),
+        node('alb', new AlbService(), 's'),
       ],
       [],
     );
@@ -79,14 +94,14 @@ describe('validateDiagram deployability', () => {
 
   it('flags subnets that share a CIDR', () => {
     const a = {
-      ...node('a', 'subnet', 'vpc'),
+      ...node('a', new SubnetService(), 'vpc'),
       properties: { CidrBlock: '10.0.1.0/24' },
     };
     const b = {
-      ...node('b', 'subnet', 'vpc'),
+      ...node('b', new SubnetService(), 'vpc'),
       properties: { CidrBlock: '10.0.1.0/24' },
     };
-    const issues = validateDiagram([node('vpc', 'vpc'), a, b], []);
+    const issues = validateDiagram([node('vpc', new VpcService()), a, b], []);
     expect(issues.some((i) => i.message.includes('share 10.0.1.0/24'))).toBe(
       true,
     );
