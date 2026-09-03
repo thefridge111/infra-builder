@@ -3,8 +3,10 @@ import {
   CanvasEdge,
   CanvasNode,
   CanvasState,
+  Port,
+  BaseAwsService,
 } from '@infra-builder/state';
-import { AWS_SERVICE_MAP } from './definitions';
+import { SERVICE_MAP, ALL_SERVICES } from '@infra-builder/state';
 
 export interface ExampleProject {
   name: string;
@@ -29,25 +31,21 @@ function diagram(
 ): CanvasState {
   const built: Record<string, CanvasNode> = {};
   Object.entries(nodes).forEach(([key, spec]) => {
-    const def = AWS_SERVICE_MAP.get(spec.type);
-    if (!def) throw new Error(`Unknown service ${spec.type}`);
-    built[key] = {
-      id: `ex-${key}`,
-      type: def.classDef,
-      label: spec.label,
+    const service = SERVICE_MAP.get(spec.type);
+    if (!service) throw new Error(`Unknown service ${spec.type}`);
+    const node = service.createNode({
       x: spec.x,
       y: spec.y,
-      width: spec.size?.[0] ?? def.defaultWidth,
-      height: spec.size?.[1] ?? def.defaultHeight,
-      ports: def.defaultPorts.map((p) => ({ ...p })),
+      width: spec.size?.[0] ?? service.defaultWidth,
+      height: spec.size?.[1] ?? service.defaultHeight,
       properties: spec.properties ?? {},
-      parentId: spec.parent ? `ex-${spec.parent}` : undefined,
-    };
+    });
+    node.id = `ex-${key}`;
+    node.label = spec.label;
+    node.parentId = spec.parent ? `ex-${spec.parent}` : undefined;
+    built[key] = node;
   });
 
-  /** TODO: This needs work. We're not building the examples properly... Validating the edges on these custom
-   * edge types is causing the breakages...
-   */
   const edges: CanvasEdge[] = links.map(([from, to, properties], i) => {
     const source = built[from];
     const target = built[to];
@@ -58,9 +56,22 @@ function diagram(
       );
     }
 
-    const outgoing = source.type.validateEdge(target.type, 'outgoing');
-    const incoming = source.type.validateEdge(target.type, 'incoming');
+    // Get service classes using the string type stored in node.type.type
+    const sourceTypeStr: AwsServiceType = (source.type as BaseAwsService).type;
+    const targetTypeStr: AwsServiceType = (target.type as BaseAwsService).type;
 
+    const sourceService = SERVICE_MAP.get(sourceTypeStr);
+    const targetService = SERVICE_MAP.get(targetTypeStr);
+
+    if (!sourceService || !targetService) {
+      throw new Error(`Service not found for edge: ${from} -> ${to}`);
+    }
+
+    // Try outgoing from source to target
+    const outgoing = sourceService.validateEdge(
+      target.type as BaseAwsService,
+      'outgoing',
+    );
     if (outgoing.allowed) {
       const ports = pickPorts(source, target);
       return {
@@ -70,8 +81,16 @@ function diagram(
         sourcePortId: ports[0],
         targetNodeId: target.id,
         targetPortId: ports[1],
+        properties,
       };
-    } else if (incoming.allowed) {
+    }
+
+    // Try incoming (reverse direction)
+    const incoming = sourceService.validateEdge(
+      target.type as BaseAwsService,
+      'incoming',
+    );
+    if (incoming.allowed) {
       const ports = pickPorts(target, source);
       return {
         id: `ex-edge-${i}`,
@@ -80,10 +99,13 @@ function diagram(
         sourcePortId: ports[0],
         targetNodeId: source.id,
         targetPortId: ports[1],
+        properties,
       };
-    } else {
-      throw new Error(`No rule for ${from} → ${to}`);
     }
+
+    throw new Error(
+      `No valid edge rule for ${from} (${sourceTypeStr}) -> ${to} (${targetTypeStr})`,
+    );
   });
 
   return {
@@ -116,8 +138,8 @@ function pickPorts(a: CanvasNode, b: CanvasNode): [string, string] {
     : dy > 0
       ? 'top'
       : 'bottom';
-  const port = (n: CanvasNode, side: string) =>
-    (n.ports.find((p) => p.side === side) ?? n.ports[0]).id;
+  const port = (n: CanvasNode, side: string): string =>
+    (n.ports.find((p: Port) => p.side === side) ?? n.ports[0]).id;
   return [port(a, sideA), port(b, sideB)];
 }
 

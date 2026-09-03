@@ -1,31 +1,42 @@
 import { AwsServiceConfig, BaseAwsService } from '../base-aws-service';
-import { AwsServiceType } from '../../../models';
+import { AwsServiceType, Port } from '../../../models';
 
 export class SqsService extends BaseAwsService {
   constructor() {
     const config: AwsServiceConfig = {
       type: 'sqs' as AwsServiceType,
+      label: 'SQS',
       category: 'Integration',
+      color: '#FF4F8B',
+      iconPath:
+        'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
+      defaultWidth: 120,
+      defaultHeight: 90,
+      defaultPorts: [
+        { id: 'top', side: 'top', offset: 0.5 },
+        { id: 'right', side: 'right', offset: 0.5 },
+        { id: 'bottom', side: 'bottom', offset: 0.5 },
+        { id: 'left', side: 'left', offset: 0.5 },
+      ] as Port[],
       edgeRules: [
         {
+          source: ['s3', 'sns', 'eventbridge'],
+          target: ['sqs'],
+          kind: 'trigger',
+        },
+        {
           source: ['lambda', 'ec2', 'ecs'],
-          target: ['rds'],
+          target: ['sqs'],
           kind: 'depends-on',
         },
-        { source: ['security-group'], target: ['rds'], kind: 'attaches' },
       ],
       propertyFields: [
+        { key: 'QueueName', label: 'Queue name', placeholder: 'optional' },
         {
-          key: 'Engine',
-          label: 'Engine',
-          options: ['mysql', 'postgres', 'mariadb'],
+          key: 'VisibilityTimeout',
+          label: 'Visibility timeout (s)',
+          placeholder: '30',
         },
-        {
-          key: 'DBInstanceClass',
-          label: 'Instance class',
-          options: ['db.t3.micro', 'db.t3.small', 'db.r5.large'],
-        },
-        { key: 'AllocatedStorage', label: 'Storage (GB)', placeholder: '20' },
       ],
     };
 
@@ -37,27 +48,29 @@ export class SnsService extends BaseAwsService {
   constructor() {
     const config: AwsServiceConfig = {
       type: 'sns' as AwsServiceType,
+      label: 'SNS',
       category: 'Integration',
+      color: '#FF4F8B',
+      iconPath:
+        'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
+      defaultWidth: 120,
+      defaultHeight: 90,
+      defaultPorts: [
+        { id: 'top', side: 'top', offset: 0.5 },
+        { id: 'right', side: 'right', offset: 0.5 },
+        { id: 'bottom', side: 'bottom', offset: 0.5 },
+        { id: 'left', side: 'left', offset: 0.5 },
+      ] as Port[],
       edgeRules: [
+        { source: ['s3', 'eventbridge'], target: ['sns'], kind: 'trigger' },
         {
           source: ['lambda', 'ec2', 'ecs'],
-          target: ['rds'],
+          target: ['sns'],
           kind: 'depends-on',
         },
-        { source: ['security-group'], target: ['rds'], kind: 'attaches' },
       ],
       propertyFields: [
-        {
-          key: 'Engine',
-          label: 'Engine',
-          options: ['mysql', 'postgres', 'mariadb'],
-        },
-        {
-          key: 'DBInstanceClass',
-          label: 'Instance class',
-          options: ['db.t3.micro', 'db.t3.small', 'db.r5.large'],
-        },
-        { key: 'AllocatedStorage', label: 'Storage (GB)', placeholder: '20' },
+        { key: 'TopicName', label: 'Topic name', placeholder: 'optional' },
       ],
     };
 
@@ -68,28 +81,39 @@ export class SnsService extends BaseAwsService {
 export class EventBridgeService extends BaseAwsService {
   constructor() {
     const config: AwsServiceConfig = {
-      type: 'sqs' as AwsServiceType,
+      type: 'eventbridge' as AwsServiceType,
+      label: 'EventBridge',
       category: 'Integration',
+      color: '#FF4F8B',
+      iconPath:
+        'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
+      defaultWidth: 120,
+      defaultHeight: 90,
+      defaultPorts: [
+        { id: 'top', side: 'top', offset: 0.5 },
+        { id: 'right', side: 'right', offset: 0.5 },
+        { id: 'bottom', side: 'bottom', offset: 0.5 },
+        { id: 'left', side: 'left', offset: 0.5 },
+      ] as Port[],
       edgeRules: [
+        { source: ['s3'], target: ['eventbridge'], kind: 'trigger' },
+        {
+          source: ['eventbridge'],
+          target: ['lambda', 'sqs', 'sns'],
+          kind: 'trigger',
+        },
         {
           source: ['lambda', 'ec2', 'ecs'],
-          target: ['rds'],
+          target: ['eventbridge'],
           kind: 'depends-on',
         },
-        { source: ['security-group'], target: ['rds'], kind: 'attaches' },
       ],
       propertyFields: [
         {
-          key: 'Engine',
-          label: 'Engine',
-          options: ['mysql', 'postgres', 'mariadb'],
+          key: 'ScheduleExpression',
+          label: 'Schedule',
+          placeholder: 'rate(5 minutes)',
         },
-        {
-          key: 'DBInstanceClass',
-          label: 'Instance class',
-          options: ['db.t3.micro', 'db.t3.small', 'db.r5.large'],
-        },
-        { key: 'AllocatedStorage', label: 'Storage (GB)', placeholder: '20' },
       ],
     };
 
@@ -100,28 +124,34 @@ export class EventBridgeService extends BaseAwsService {
 export class ApiGatewayService extends BaseAwsService {
   constructor() {
     const config: AwsServiceConfig = {
-      type: 'sqs' as AwsServiceType,
+      type: 'api-gateway' as AwsServiceType,
+      label: 'API Gateway',
       category: 'Integration',
+      color: '#FF4F8B',
+      iconPath:
+        'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
+      defaultWidth: 140,
+      defaultHeight: 80,
+      defaultPorts: [
+        { id: 'left', side: 'left', offset: 0.5 },
+        { id: 'right-top', side: 'right', offset: 0.3 },
+        { id: 'right-bottom', side: 'right', offset: 0.7 },
+      ] as Port[],
       edgeRules: [
+        { source: ['api-gateway'], target: ['lambda'], kind: 'trigger' },
         {
           source: ['lambda', 'ec2', 'ecs'],
-          target: ['rds'],
+          target: ['api-gateway'],
           kind: 'depends-on',
         },
-        { source: ['security-group'], target: ['rds'], kind: 'attaches' },
       ],
       propertyFields: [
+        { key: 'RouteKey', label: 'Route', placeholder: 'GET /items' },
         {
-          key: 'Engine',
-          label: 'Engine',
-          options: ['mysql', 'postgres', 'mariadb'],
+          key: 'Name',
+          label: 'API name',
+          placeholder: 'defaults to node name',
         },
-        {
-          key: 'DBInstanceClass',
-          label: 'Instance class',
-          options: ['db.t3.micro', 'db.t3.small', 'db.r5.large'],
-        },
-        { key: 'AllocatedStorage', label: 'Storage (GB)', placeholder: '20' },
       ],
     };
 
@@ -132,28 +162,30 @@ export class ApiGatewayService extends BaseAwsService {
 export class KinesisService extends BaseAwsService {
   constructor() {
     const config: AwsServiceConfig = {
-      type: 'sqs' as AwsServiceType,
+      type: 'kinesis' as AwsServiceType,
+      label: 'Kinesis',
       category: 'Integration',
+      color: '#FF4F8B',
+      iconPath:
+        'M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6 3-6 3-6-3 6-3zM4 9.4l7 3.5v7.2l-7-3.5V9.4zm9 10.7v-7.2l7-3.5v7.2l-7 3.5z',
+      defaultWidth: 120,
+      defaultHeight: 90,
+      defaultPorts: [
+        { id: 'top', side: 'top', offset: 0.5 },
+        { id: 'right', side: 'right', offset: 0.5 },
+        { id: 'bottom', side: 'bottom', offset: 0.5 },
+        { id: 'left', side: 'left', offset: 0.5 },
+      ] as Port[],
       edgeRules: [
+        { source: ['kinesis'], target: ['lambda'], kind: 'trigger' },
         {
           source: ['lambda', 'ec2', 'ecs'],
-          target: ['rds'],
+          target: ['kinesis'],
           kind: 'depends-on',
         },
-        { source: ['security-group'], target: ['rds'], kind: 'attaches' },
       ],
       propertyFields: [
-        {
-          key: 'Engine',
-          label: 'Engine',
-          options: ['mysql', 'postgres', 'mariadb'],
-        },
-        {
-          key: 'DBInstanceClass',
-          label: 'Instance class',
-          options: ['db.t3.micro', 'db.t3.small', 'db.r5.large'],
-        },
-        { key: 'AllocatedStorage', label: 'Storage (GB)', placeholder: '20' },
+        { key: 'ShardCount', label: 'Shards', placeholder: '1' },
       ],
     };
 
