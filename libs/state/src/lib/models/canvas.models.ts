@@ -21,7 +21,25 @@ export type AwsServiceType =
   | 'api-gateway'
   | 'kinesis';
 
-export type EdgeKind = 'trigger' | 'attaches' | 'network' | 'depends-on';
+export const EdgeKind = {
+  dlq: 'dlq',
+  trigger: 'trigger',
+  eventSource: 'eventSource',
+  attaches: 'attaches',
+  network: 'network',
+  dependsOn: 'dependsOn',
+} as const;
+
+export const EdgeKindLabel: Record<EdgeKind, string> = {
+  [EdgeKind.dlq]: 'DLQ Destination',
+  [EdgeKind.trigger]: 'Trigger',
+  [EdgeKind.eventSource]: 'Event Source',
+  [EdgeKind.attaches]: 'Attaches to',
+  [EdgeKind.network]: 'Routes to',
+  [EdgeKind.dependsOn]: 'Depends on',
+};
+
+export type EdgeKind = (typeof EdgeKind)[keyof typeof EdgeKind];
 
 export interface Port {
   id: string;
@@ -74,4 +92,5 @@ export interface EdgeRule {
   source: AwsServiceType[];
   target: AwsServiceType[];
   kind: EdgeKind;
+  label: string;
 }

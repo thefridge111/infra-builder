@@ -1,5 +1,5 @@
 import { AwsServiceConfig, BaseAwsService } from '../base-aws-service';
-import { AwsServiceType, Port } from '../../../models';
+import { AwsServiceType, Port, EdgeKind, EdgeKindLabel } from '../../../models';
 
 export class S3Service extends BaseAwsService {
   constructor() {
@@ -19,14 +19,35 @@ export class S3Service extends BaseAwsService {
         { id: 'left', side: 'left', offset: 0.5 },
       ] as Port[],
       edgeRules: [
-        { source: ['s3'], target: ['lambda'], kind: 'trigger' },
-        { source: ['s3'], target: ['sqs'], kind: 'trigger' },
-        { source: ['s3'], target: ['sns'], kind: 'trigger' },
-        { source: ['s3'], target: ['eventbridge'], kind: 'trigger' },
+        {
+          source: ['s3'],
+          target: ['lambda'],
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
+        },
+        {
+          source: ['s3'],
+          target: ['sqs'],
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
+        },
+        {
+          source: ['s3'],
+          target: ['sns'],
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
+        },
+        {
+          source: ['s3'],
+          target: ['eventbridge'],
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
+        },
         {
           source: ['lambda', 'ec2', 'ecs'],
           target: ['s3'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
       ],
       propertyFields: [
@@ -54,7 +75,14 @@ export class EbsService extends BaseAwsService {
         { id: 'bottom', side: 'bottom', offset: 0.5 },
         { id: 'left', side: 'left', offset: 0.5 },
       ] as Port[],
-      edgeRules: [{ source: ['ebs'], target: ['ec2'], kind: 'attaches' }],
+      edgeRules: [
+        {
+          source: ['ebs'],
+          target: ['ec2'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
+      ],
       propertyFields: [{ key: 'Size', label: 'Size (GB)', placeholder: '8' }],
     };
 

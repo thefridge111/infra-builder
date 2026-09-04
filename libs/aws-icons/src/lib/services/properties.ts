@@ -133,9 +133,6 @@ export const ACCESS_TARGETS: ReadonlySet<AwsServiceType> =
     'eventbridge',
   ]);
 
-export type AccessMode = 'read' | 'write' | 'read-write';
-export const DEFAULT_ACCESS: AccessMode = 'read-write';
-
 export const ACCESS_PROPERTY_FIELDS: PropertyField[] = [
   {
     key: 'Access',

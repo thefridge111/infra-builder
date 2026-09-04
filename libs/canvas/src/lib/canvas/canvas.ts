@@ -20,12 +20,10 @@ import {
   EdgeKind,
   Port,
   cloneSubgraph,
+  EdgeKindLabel,
 } from '@infra-builder/state';
 import {
-  ACCESS_TARGETS,
   AWS_SERVICE_MAP,
-  DEFAULT_ACCESS,
-  EDGE_KIND_LABELS,
   validateDiagram,
   type AwsServiceDefinition,
 } from '@infra-builder/aws-icons';
@@ -44,7 +42,9 @@ const EDGE_STYLE: Record<
   trigger: { stroke: '#e7157b', dash: [8, 4], arrow: true },
   attaches: { stroke: '#9ca3af', dash: [2, 3], arrow: false },
   network: { stroke: '#2563eb', arrow: true },
-  'depends-on': { stroke: '#6b7280', arrow: true },
+  dependsOn: { stroke: '#6b7280', arrow: true },
+  dlq: { stroke: '#f109de', arrow: true },
+  eventSource: { stroke: '#18a04c', arrow: true },
 };
 
 @Component({
@@ -616,7 +616,8 @@ export class Canvas implements AfterViewInit, OnDestroy {
     });
     this.edgesLayer.add(arrow);
 
-    const text = edge.label ?? this.defaultEdgeLabel(edge);
+    // Make it clear we have an edge without a label
+    const text = edge.label ?? 'undefined-label';
     const anchor = labelAnchor(points);
     if (text && anchor) {
       const label = new Konva.Label({
@@ -639,14 +640,6 @@ export class Canvas implements AfterViewInit, OnDestroy {
       label.offsetY(label.height() / 2);
       this.edgesLayer.add(label);
     }
-  }
-
-  /** Depends-on edges to data services read as their IAM access mode. */
-  private defaultEdgeLabel(edge: CanvasEdge): string {
-    if (edge.kind !== 'depends-on') return EDGE_KIND_LABELS[edge.kind];
-    const target = this.state.node(edge.targetNodeId);
-    if (!target || !ACCESS_TARGETS.has(target.type.type)) return '';
-    return (edge.properties?.['Access'] ?? DEFAULT_ACCESS).replace('-', '/');
   }
 
   private drawGrid(): void {
@@ -714,7 +707,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
       const selected = edgeIds.has(arrow.id());
       const stroke = selected
         ? '#3b82f6'
-        : EDGE_STYLE[edge?.kind ?? 'depends-on'].stroke;
+        : EDGE_STYLE[edge?.kind ?? EdgeKind.dependsOn].stroke;
       arrow.stroke(stroke);
       arrow.fill(stroke);
       arrow.strokeWidth(selected ? 3 : 2);
@@ -969,7 +962,8 @@ export class Canvas implements AfterViewInit, OnDestroy {
       if (outgoing.allowed) {
         edge = {
           id: this.state.createEdgeId(),
-          kind: outgoing.kind ?? 'depends-on',
+          kind: outgoing.kind ?? EdgeKind.dependsOn,
+          label: outgoing.label ?? EdgeKindLabel[EdgeKind.dependsOn],
           sourceNodeId,
           sourcePortId,
           targetNodeId,
@@ -978,7 +972,8 @@ export class Canvas implements AfterViewInit, OnDestroy {
       } else if (incoming.allowed) {
         edge = {
           id: this.state.createEdgeId(),
-          kind: incoming.kind ?? 'depends-on',
+          kind: incoming.kind ?? EdgeKind.dependsOn,
+          label: incoming.label ?? EdgeKindLabel[EdgeKind.dependsOn],
           sourceNodeId: targetNodeId,
           sourcePortId: targetPortId,
           targetNodeId: sourceNodeId,

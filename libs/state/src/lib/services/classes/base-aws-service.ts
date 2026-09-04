@@ -5,6 +5,7 @@ import {
   EdgeRule,
   Port,
   CanvasNode,
+  EdgeKindLabel,
 } from '../../models';
 
 export interface AwsServiceConfig {
@@ -98,6 +99,7 @@ export abstract class BaseAwsService {
     return {
       allowed: match !== undefined,
       kind: match?.kind,
+      label: match?.kind ? EdgeKindLabel[match.kind] : '',
       reason: match
         ? undefined
         : `No rule allows ${this.type} -> ${targetType.type}`,
@@ -113,5 +115,6 @@ export abstract class BaseAwsService {
 export interface EdgeValidationResult {
   allowed: boolean;
   kind?: EdgeKind;
+  label?: string;
   reason?: string;
 }

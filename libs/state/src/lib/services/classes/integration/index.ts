@@ -1,5 +1,5 @@
 import { AwsServiceConfig, BaseAwsService } from '../base-aws-service';
-import { AwsServiceType, Port } from '../../../models';
+import { AwsServiceType, Port, EdgeKind, EdgeKindLabel } from '../../../models';
 
 export class SqsService extends BaseAwsService {
   constructor() {
@@ -22,12 +22,14 @@ export class SqsService extends BaseAwsService {
         {
           source: ['s3', 'sns', 'eventbridge'],
           target: ['sqs'],
-          kind: 'trigger',
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
         },
         {
           source: ['lambda', 'ec2', 'ecs'],
           target: ['sqs'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
       ],
       propertyFields: [
@@ -62,11 +64,17 @@ export class SnsService extends BaseAwsService {
         { id: 'left', side: 'left', offset: 0.5 },
       ] as Port[],
       edgeRules: [
-        { source: ['s3', 'eventbridge'], target: ['sns'], kind: 'trigger' },
+        {
+          source: ['s3', 'eventbridge'],
+          target: ['sns'],
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
+        },
         {
           source: ['lambda', 'ec2', 'ecs'],
           target: ['sns'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
       ],
       propertyFields: [
@@ -96,16 +104,23 @@ export class EventBridgeService extends BaseAwsService {
         { id: 'left', side: 'left', offset: 0.5 },
       ] as Port[],
       edgeRules: [
-        { source: ['s3'], target: ['eventbridge'], kind: 'trigger' },
+        {
+          source: ['s3'],
+          target: ['eventbridge'],
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
+        },
         {
           source: ['eventbridge'],
           target: ['lambda', 'sqs', 'sns'],
-          kind: 'trigger',
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
         },
         {
           source: ['lambda', 'ec2', 'ecs'],
           target: ['eventbridge'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
       ],
       propertyFields: [
@@ -138,11 +153,17 @@ export class ApiGatewayService extends BaseAwsService {
         { id: 'right-bottom', side: 'right', offset: 0.7 },
       ] as Port[],
       edgeRules: [
-        { source: ['api-gateway'], target: ['lambda'], kind: 'trigger' },
+        {
+          source: ['api-gateway'],
+          target: ['lambda'],
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
+        },
         {
           source: ['lambda', 'ec2', 'ecs'],
           target: ['api-gateway'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
       ],
       propertyFields: [
@@ -177,11 +198,17 @@ export class KinesisService extends BaseAwsService {
         { id: 'left', side: 'left', offset: 0.5 },
       ] as Port[],
       edgeRules: [
-        { source: ['kinesis'], target: ['lambda'], kind: 'trigger' },
+        {
+          source: ['kinesis'],
+          target: ['lambda'],
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
+        },
         {
           source: ['lambda', 'ec2', 'ecs'],
           target: ['kinesis'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
       ],
       propertyFields: [

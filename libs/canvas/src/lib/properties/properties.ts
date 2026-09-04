@@ -10,11 +10,11 @@ import {
 import {
   CanvasEdge,
   CanvasStateService,
+  EdgeKind,
   PropertyField,
 } from '@infra-builder/state';
 import {
   AWS_SERVICE_MAP,
-  EDGE_KIND_LABELS,
   TRIGGER_PROPERTY_FIELDS,
   ACCESS_PROPERTY_FIELDS,
   ACCESS_TARGETS,
@@ -67,7 +67,7 @@ export class Properties {
       return (source && TRIGGER_PROPERTY_FIELDS[source.type.type]) ?? [];
     }
     if (
-      edge.kind === 'depends-on' &&
+      edge.kind === EdgeKind.dependsOn &&
       target &&
       ACCESS_TARGETS.has(target.type.type)
     ) {
@@ -94,7 +94,7 @@ export class Properties {
 
   readonly kindLabel = computed(() => {
     const edge = this.edge();
-    return edge ? EDGE_KIND_LABELS[edge.kind] : '';
+    return edge ? edge.kind : '';
   });
 
   resolveEdge(canvasEdge: CanvasEdge): string | null {
@@ -109,9 +109,9 @@ export class Properties {
     const incoming = source.type.validateEdge(target.type, 'incoming');
 
     if (outgoing.allowed && outgoing.kind) {
-      return EDGE_KIND_LABELS[outgoing.kind];
+      return outgoing.kind;
     } else if (incoming.allowed && incoming.kind) {
-      return EDGE_KIND_LABELS[incoming.kind];
+      return incoming.kind;
     }
     return null;
   }

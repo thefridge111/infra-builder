@@ -1,5 +1,5 @@
 import { AwsServiceConfig, BaseAwsService } from '../base-aws-service';
-import { AwsServiceType, Port } from '../../../models';
+import { AwsServiceType, Port, EdgeKind, EdgeKindLabel } from '../../../models';
 
 export class Ec2Service extends BaseAwsService {
   constructor() {
@@ -29,17 +29,39 @@ export class Ec2Service extends BaseAwsService {
             'kinesis',
             'eventbridge',
           ],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
         {
           source: ['ec2'],
           target: ['ec2', 'lambda', 'ecs'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
-        { source: ['security-group'], target: ['ec2'], kind: 'attaches' },
-        { source: ['iam-role'], target: ['ec2'], kind: 'attaches' },
-        { source: ['ebs'], target: ['ec2'], kind: 'attaches' },
-        { source: ['alb'], target: ['ec2'], kind: 'network' },
+        {
+          source: ['security-group'],
+          target: ['ec2'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
+        {
+          source: ['iam-role'],
+          target: ['ec2'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
+        {
+          source: ['ebs'],
+          target: ['ec2'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
+        {
+          source: ['alb'],
+          target: ['ec2'],
+          kind: EdgeKind.network,
+          label: EdgeKindLabel[EdgeKind.network],
+        },
       ],
       propertyFields: [
         {
@@ -89,12 +111,14 @@ export class LambdaService extends BaseAwsService {
             'kinesis',
             'eventbridge',
           ],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
         {
           source: ['lambda'],
           target: ['ec2', 'lambda', 'ecs'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
         {
           source: [
@@ -107,10 +131,21 @@ export class LambdaService extends BaseAwsService {
             'dynamodb',
           ],
           target: ['lambda'],
-          kind: 'trigger',
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
         },
-        { source: ['iam-role'], target: ['lambda'], kind: 'attaches' },
-        { source: ['security-group'], target: ['lambda'], kind: 'attaches' },
+        {
+          source: ['iam-role'],
+          target: ['lambda'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
+        {
+          source: ['security-group'],
+          target: ['lambda'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
       ],
       propertyFields: [
         {
@@ -157,15 +192,27 @@ export class EcsService extends BaseAwsService {
             'kinesis',
             'eventbridge',
           ],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
         {
           source: ['ecs'],
           target: ['ec2', 'lambda', 'ecs'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
-        { source: ['iam-role'], target: ['ecs'], kind: 'attaches' },
-        { source: ['security-group'], target: ['ecs'], kind: 'attaches' },
+        {
+          source: ['iam-role'],
+          target: ['ecs'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
+        {
+          source: ['security-group'],
+          target: ['ecs'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
       ],
       propertyFields: [],
     };

@@ -1,5 +1,5 @@
 import { AwsServiceConfig, BaseAwsService } from '../base-aws-service';
-import { AwsServiceType, Port } from '../../../models';
+import { AwsServiceType, Port, EdgeKind, EdgeKindLabel } from '../../../models';
 
 export class AlbService extends BaseAwsService {
   constructor() {
@@ -17,8 +17,18 @@ export class AlbService extends BaseAwsService {
         { id: 'right-bottom', side: 'right', offset: 0.7 },
       ] as Port[],
       edgeRules: [
-        { source: ['alb'], target: ['ec2', 'lambda'], kind: 'network' },
-        { source: ['security-group'], target: ['alb'], kind: 'attaches' },
+        {
+          source: ['alb'],
+          target: ['ec2', 'lambda'],
+          kind: EdgeKind.network,
+          label: EdgeKindLabel[EdgeKind.network],
+        },
+        {
+          source: ['security-group'],
+          target: ['alb'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
       ],
       propertyFields: [
         {

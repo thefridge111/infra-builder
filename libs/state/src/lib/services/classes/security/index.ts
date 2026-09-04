@@ -1,5 +1,5 @@
 import { AwsServiceConfig, BaseAwsService } from '../base-aws-service';
-import { AwsServiceType, Port } from '../../../models';
+import { AwsServiceType, Port, EdgeKind, EdgeKindLabel } from '../../../models';
 
 export class IamRoleService extends BaseAwsService {
   constructor() {
@@ -22,7 +22,8 @@ export class IamRoleService extends BaseAwsService {
         {
           source: ['iam-role'],
           target: ['ec2', 'lambda', 'ecs'],
-          kind: 'attaches',
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
         },
       ],
       propertyFields: [],
@@ -53,12 +54,14 @@ export class SecurityGroupService extends BaseAwsService {
         {
           source: ['security-group'],
           target: ['ec2', 'lambda', 'ecs', 'rds', 'alb'],
-          kind: 'attaches',
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
         },
         {
           source: ['security-group'],
           target: ['security-group'],
-          kind: 'network',
+          kind: EdgeKind.network,
+          label: EdgeKindLabel[EdgeKind.network],
         },
       ],
       propertyFields: [{ key: 'GroupDescription', label: 'Description' }],

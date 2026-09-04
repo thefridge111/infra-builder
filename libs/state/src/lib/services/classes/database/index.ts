@@ -1,5 +1,5 @@
 import { AwsServiceConfig, BaseAwsService } from '../base-aws-service';
-import { AwsServiceType, Port } from '../../../models';
+import { AwsServiceType, Port, EdgeKind, EdgeKindLabel } from '../../../models';
 
 export class RdsService extends BaseAwsService {
   constructor() {
@@ -22,9 +22,15 @@ export class RdsService extends BaseAwsService {
         {
           source: ['lambda', 'ec2', 'ecs'],
           target: ['rds'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
-        { source: ['security-group'], target: ['rds'], kind: 'attaches' },
+        {
+          source: ['security-group'],
+          target: ['rds'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
       ],
       propertyFields: [
         {
@@ -66,9 +72,15 @@ export class DynamodbService extends BaseAwsService {
         {
           source: ['lambda', 'ec2', 'ecs'],
           target: ['dynamodb'],
-          kind: 'depends-on',
+          kind: EdgeKind.dependsOn,
+          label: EdgeKindLabel[EdgeKind.dependsOn],
         },
-        { source: ['dynamodb'], target: ['lambda'], kind: 'trigger' },
+        {
+          source: ['dynamodb'],
+          target: ['lambda'],
+          kind: EdgeKind.trigger,
+          label: EdgeKindLabel[EdgeKind.trigger],
+        },
       ],
       propertyFields: [
         { key: 'TableName', label: 'Table name', placeholder: 'optional' },

@@ -5,8 +5,10 @@ import {
   CanvasState,
   Port,
   BaseAwsService,
+  EdgeKind,
+  EdgeKindLabel,
 } from '@infra-builder/state';
-import { SERVICE_MAP, ALL_SERVICES } from '@infra-builder/state';
+import { SERVICE_MAP } from '@infra-builder/state';
 
 export interface ExampleProject {
   name: string;
@@ -76,7 +78,8 @@ function diagram(
       const ports = pickPorts(source, target);
       return {
         id: `ex-edge-${i}`,
-        kind: outgoing.kind ?? 'depends-on',
+        kind: outgoing.kind ?? EdgeKind.dependsOn,
+        label: outgoing.label ?? EdgeKindLabel.dependsOn,
         sourceNodeId: source.id,
         sourcePortId: ports[0],
         targetNodeId: target.id,
@@ -94,7 +97,8 @@ function diagram(
       const ports = pickPorts(target, source);
       return {
         id: `ex-edge-${i}`,
-        kind: incoming.kind ?? 'depends-on',
+        kind: incoming.kind ?? EdgeKind.dependsOn,
+        label: incoming.label ?? EdgeKindLabel.dependsOn,
         sourceNodeId: target.id,
         sourcePortId: ports[0],
         targetNodeId: source.id,

@@ -1,5 +1,5 @@
 import { AwsServiceConfig, BaseAwsService } from '../base-aws-service';
-import { AwsServiceType, Port } from '../../../models';
+import { AwsServiceType, Port, EdgeKind, EdgeKindLabel } from '../../../models';
 
 export class VpcService extends BaseAwsService {
   constructor() {
@@ -19,8 +19,18 @@ export class VpcService extends BaseAwsService {
       ] as Port[],
       container: true,
       edgeRules: [
-        { source: ['internet-gateway'], target: ['vpc'], kind: 'network' },
-        { source: ['subnet'], target: ['vpc'], kind: 'attaches' },
+        {
+          source: ['internet-gateway'],
+          target: ['vpc'],
+          kind: EdgeKind.network,
+          label: EdgeKindLabel[EdgeKind.network],
+        },
+        {
+          source: ['subnet'],
+          target: ['vpc'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
       ],
       propertyFields: [
         { key: 'CidrBlock', label: 'CIDR block', placeholder: '10.0.0.0/16' },
@@ -49,9 +59,24 @@ export class SubnetService extends BaseAwsService {
       ] as Port[],
       container: true,
       edgeRules: [
-        { source: ['vpc'], target: ['subnet'], kind: 'attaches' },
-        { source: ['internet-gateway'], target: ['subnet'], kind: 'network' },
-        { source: ['nat-gateway'], target: ['subnet'], kind: 'network' },
+        {
+          source: ['vpc'],
+          target: ['subnet'],
+          kind: EdgeKind.attaches,
+          label: EdgeKindLabel[EdgeKind.attaches],
+        },
+        {
+          source: ['internet-gateway'],
+          target: ['subnet'],
+          kind: EdgeKind.network,
+          label: EdgeKindLabel[EdgeKind.network],
+        },
+        {
+          source: ['nat-gateway'],
+          target: ['subnet'],
+          kind: EdgeKind.network,
+          label: EdgeKindLabel[EdgeKind.network],
+        },
       ],
       propertyFields: [
         { key: 'CidrBlock', label: 'CIDR block', placeholder: '10.0.1.0/24' },
@@ -83,8 +108,18 @@ export class InternetGatewayService extends BaseAwsService {
         { id: 'left', side: 'left', offset: 0.5 },
       ] as Port[],
       edgeRules: [
-        { source: ['internet-gateway'], target: ['vpc'], kind: 'network' },
-        { source: ['internet-gateway'], target: ['subnet'], kind: 'network' },
+        {
+          source: ['internet-gateway'],
+          target: ['vpc'],
+          kind: EdgeKind.network,
+          label: EdgeKindLabel[EdgeKind.network],
+        },
+        {
+          source: ['internet-gateway'],
+          target: ['subnet'],
+          kind: EdgeKind.network,
+          label: EdgeKindLabel[EdgeKind.network],
+        },
       ],
       propertyFields: [],
     };
@@ -109,7 +144,12 @@ export class NatGatewayService extends BaseAwsService {
         { id: 'left', side: 'left', offset: 0.5 },
       ] as Port[],
       edgeRules: [
-        { source: ['nat-gateway'], target: ['subnet'], kind: 'network' },
+        {
+          source: ['nat-gateway'],
+          target: ['subnet'],
+          kind: EdgeKind.network,
+          label: EdgeKindLabel[EdgeKind.network],
+        },
       ],
       propertyFields: [],
     };
