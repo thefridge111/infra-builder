@@ -1,11 +1,11 @@
 import { Component, inject, output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { AWS_CATEGORIES } from '@infra-builder/aws-icons';
 import {
-  AWS_SERVICES,
-  AWS_CATEGORIES,
-  type AwsServiceDefinition,
-} from '@infra-builder/aws-icons';
-import { CanvasStateService } from '@infra-builder/state';
+  BaseAwsService,
+  CanvasStateService,
+  getServicesByCategory,
+} from '@infra-builder/state';
 
 @Component({
   selector: 'lib-sidebar',
@@ -17,8 +17,7 @@ export class Sidebar {
   private state = inject(CanvasStateService);
   deleteRequested = output<void>();
   fitRequested = output<void>();
-  addRequested = output<AwsServiceDefinition>();
-  services = AWS_SERVICES;
+  addRequested = output<BaseAwsService>();
   categories = AWS_CATEGORIES;
   searchText = '';
   expandedCategories = new Set<string>(AWS_CATEGORIES);
@@ -35,16 +34,12 @@ export class Sidebar {
     return this.expandedCategories.has(category);
   }
 
-  filteredServices(category: string): AwsServiceDefinition[] {
-    return this.services.filter(
-      (s) =>
-        s.category === category &&
-        (this.searchText === '' ||
-          s.label.toLowerCase().includes(this.searchText.toLowerCase())),
-    );
+  filteredServices(category: string): BaseAwsService[] {
+    const services = getServicesByCategory(category, this.searchText);
+    return services;
   }
 
-  onDragStart(event: DragEvent, service: AwsServiceDefinition): void {
+  onDragStart(event: DragEvent, service: BaseAwsService): void {
     event.dataTransfer?.setData('application/aws-service', service.type);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'copy';

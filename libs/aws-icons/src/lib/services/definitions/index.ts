@@ -38,8 +38,6 @@ export const AWS_SERVICES: AwsServiceDefinition[] = [
 
 export const AWS_CATEGORIES = [...new Set(AWS_SERVICES.map((s) => s.category))];
 
-export const AWS_SERVICE_MAP = new Map(AWS_SERVICES.map((s) => [s.type, s]));
-
 // Re-export individual services for direct imports
 export * from './networking';
 export * from './compute';

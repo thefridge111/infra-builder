@@ -21,12 +21,27 @@ export const SERVICE_MAP = new Map<string, BaseAwsService>(
   ALL_SERVICES.map((s) => [s.type, s]),
 );
 
-export function getService(type: string): BaseAwsService | undefined {
+export function getService(type?: string): BaseAwsService | undefined {
+  if (!type) {
+    return undefined;
+  }
+
   return SERVICE_MAP.get(type);
 }
 
-export function getServicesByCategory(category: string): BaseAwsService[] {
-  return ALL_SERVICES.filter((s) => s.category === category);
+export function getServicesByCategory(
+  category: string,
+  typeSearch = '',
+): BaseAwsService[] {
+  const services = ALL_SERVICES.filter((s) => {
+    return (
+      s.category === category &&
+      (typeSearch === '' ||
+        s.label.toLowerCase().includes(typeSearch.toLowerCase()))
+    );
+  });
+
+  return services;
 }
 
 export function getAllCategories(): string[] {

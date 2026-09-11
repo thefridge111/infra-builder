@@ -14,19 +14,16 @@ import {
 import Konva from 'konva';
 import {
   CanvasStateService,
-  AwsServiceType,
   CanvasNode,
   CanvasEdge,
   EdgeKind,
   Port,
   cloneSubgraph,
   EdgeKindLabel,
+  getService,
+  BaseAwsService,
 } from '@infra-builder/state';
-import {
-  AWS_SERVICE_MAP,
-  validateDiagram,
-  type AwsServiceDefinition,
-} from '@infra-builder/aws-icons';
+import { validateDiagram } from '@infra-builder/aws-icons';
 import { routeEdge } from './routing';
 
 const GRID_SIZE = 20;
@@ -272,7 +269,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
   }
 
   /** Adds a node at the centre of the current viewport. */
-  addNode(serviceDef: AwsServiceDefinition): void {
+  addNode(serviceDef: BaseAwsService): void {
     if (!this.stage) return;
     const center = this.toCanvasPoint({
       x: this.stage.width() / 2,
@@ -318,8 +315,10 @@ export class Canvas implements AfterViewInit, OnDestroy {
   onDrop(event: DragEvent): void {
     event.preventDefault();
     const serviceType = event.dataTransfer?.getData('application/aws-service');
-    const serviceDef = AWS_SERVICE_MAP.get(serviceType as AwsServiceType);
-    if (!serviceDef || !this.stage) return;
+    const serviceDef = getService(serviceType);
+    if (!serviceDef || !this.stage) {
+      return;
+    }
 
     const rect = this.stage.container().getBoundingClientRect();
     const point = this.toCanvasPoint({
@@ -329,18 +328,15 @@ export class Canvas implements AfterViewInit, OnDestroy {
     this.createNode(serviceDef, point.x, point.y);
   }
 
-  private createNode(def: AwsServiceDefinition, x: number, y: number): void {
-    const node: CanvasNode = {
+  private createNode(def: BaseAwsService, x: number, y: number): void {
+    const node: CanvasNode = def.createNode({
       id: this.state.createNodeId(),
-      type: def.classDef,
-      label: def.label,
       x: snap(x),
       y: snap(y),
       width: def.defaultWidth,
       height: def.defaultHeight,
-      ports: def.defaultPorts.map((p) => ({ ...p })),
       properties: {},
-    };
+    });
     node.parentId = this.findContainerFor(node);
     this.state.addNode(node);
     if (def.container) this.adoptNodesInside(node.id);
@@ -372,11 +368,11 @@ export class Canvas implements AfterViewInit, OnDestroy {
       return parent ? 1 + depth(parent) : 0;
     };
     const order = (n: CanvasNode): number =>
-      (AWS_SERVICE_MAP.get(n.type.type)?.container ? 0 : 1000) + depth(n);
+      (getService(n.type.type)?.container ? 0 : 1000) + depth(n);
     [...nodes]
       .sort((a, b) => order(a) - order(b))
       .forEach((node) => {
-        const def = AWS_SERVICE_MAP.get(node.type.type);
+        const def = getService(node.type.type);
         if (def) this.renderNode(node, def, issues.get(node.id));
       });
     edges.forEach((edge) => this.renderEdge(edge));
@@ -390,7 +386,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
 
   private renderNode(
     node: CanvasNode,
-    def: AwsServiceDefinition,
+    def: BaseAwsService,
     issue?: 'error' | 'warning',
   ): void {
     const group = new Konva.Group({
@@ -1087,7 +1083,7 @@ export class Canvas implements AfterViewInit, OnDestroy {
       .filter(
         (n) =>
           !excluded.has(n.id) &&
-          AWS_SERVICE_MAP.get(n.type.type)?.container &&
+          getService(n.type.type)?.container &&
           cx >= n.x &&
           cx <= n.x + n.width &&
           cy >= n.y &&

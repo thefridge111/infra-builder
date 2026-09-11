@@ -14,7 +14,6 @@ import {
   PropertyField,
 } from '@infra-builder/state';
 import {
-  AWS_SERVICE_MAP,
   TRIGGER_PROPERTY_FIELDS,
   ACCESS_PROPERTY_FIELDS,
   ACCESS_TARGETS,
@@ -88,9 +87,7 @@ export class Properties {
     validateDiagram(this.state.nodes(), this.state.edges()),
   );
 
-  readonly typeLabel = computed(
-    () => AWS_SERVICE_MAP.get(this.node()?.type.type ?? 'vpc')?.label ?? '',
-  );
+  readonly typeLabel = computed(() => this.node()?.type.label ?? '');
 
   readonly kindLabel = computed(() => {
     const edge = this.edge();
